@@ -22,6 +22,7 @@
 //!
 //! ```
 //! use std::thread;
+//! use fragile::Fragile;
 //!
 //! // creating and using a fragile object in the same thread works
 //! let val = Fragile::new(true);

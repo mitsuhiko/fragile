@@ -42,7 +42,7 @@ pub struct Sticky<T> {
 
 impl<T> Drop for Sticky<T> {
     fn drop(&mut self) {
-        if mem::needs_drop::<T> {
+        if mem::needs_drop::<T>() {
             unsafe {
                 if self.is_same_thread() {
                     self.unsafe_take_value();
