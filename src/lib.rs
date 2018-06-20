@@ -148,7 +148,7 @@ impl<T> Fragile<T> {
 impl<T> Drop for Fragile<T> {
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
-            if get_thread_id() != self.thread_id {
+            if get_thread_id() == self.thread_id {
                 unsafe {
                     ManuallyDrop::drop(&mut self.value)
                 }
@@ -265,4 +265,51 @@ fn test_basic() {
     thread::spawn(move || {
         assert!(val.try_get().is_err());
     }).join().unwrap();
+}
+
+#[test]
+fn test_mut() {
+    let mut val = Fragile::new(true);
+    *val.get_mut() = false;
+    assert_eq!(val.to_string(), "false");
+    assert_eq!(val.get(), &false);
+}
+
+#[test]
+#[should_panic]
+fn test_access_other_thread() {
+    use std::thread;
+    let val = Fragile::new(true);
+    thread::spawn(move || {
+        val.get();
+    }).join().unwrap();
+}
+
+#[test]
+fn test_noop_drop_elsewhere() {
+    use std::thread;
+    let val = Fragile::new(true);
+    thread::spawn(move || {
+        // force the move
+        val.try_get().ok();
+    }).join().unwrap();
+}
+
+#[test]
+fn test_panic_on_drop_elsewhere() {
+    use std::thread;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let was_called = Arc::new(AtomicBool::new(false));
+    struct X(Arc<AtomicBool>);
+    impl Drop for X {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let val = Fragile::new(X(was_called.clone()));
+    assert!(thread::spawn(move || {
+        val.try_get().ok();
+    }).join().is_err());
+    assert_eq!(was_called.load(Ordering::SeqCst), false);
 }
