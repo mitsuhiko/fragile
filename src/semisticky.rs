@@ -215,8 +215,6 @@ impl<T: fmt::Debug> fmt::Debug for SemiSticky<T> {
     }
 }
 
-unsafe impl<T> Send for SemiSticky<T> {}
-
 #[test]
 fn test_basic() {
     use std::thread;

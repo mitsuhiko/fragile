@@ -233,6 +233,12 @@ impl<T: fmt::Debug> fmt::Debug for Fragile<T> {
     }
 }
 
+// this type is sync because access can only ever happy from the same thread
+// that created it originally.  All other threads will be able to safely
+// call some basic operations on the reference and they will fail.
+unsafe impl<T> Sync for Fragile<T> {}
+
+// The entire point of this type is to be Send
 unsafe impl<T> Send for Fragile<T> {}
 
 #[test]
