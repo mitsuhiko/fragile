@@ -279,7 +279,7 @@ impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
 
 // similar as for fragile ths type is sync because it only accesses TLS data
 // which is thread local.  There is nothing that needs to be synchronized.
-unsafe impl<T> Sync for Sticky<T> {}
+unsafe impl<T: Sync> Sync for Sticky<T> {}
 
 // The entire point of this type is to be Send
 unsafe impl<T> Send for Sticky<T> {}
