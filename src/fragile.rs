@@ -26,9 +26,11 @@ pub(crate) fn get_thread_id() -> usize {
 /// the destructor will panic.  Alternatively you can use `Sticky<T>` which is
 /// not going to panic but might temporarily leak the value.
 pub struct Fragile<T> {
-    value: ManuallyDrop<UnsafeCell<T>>,
+    value: ManuallyDrop<UnsafeCell<Box<T>>>,
     thread_id: usize,
 }
+
+unsafe impl<T> Sync for Fragile<T> {}
 
 impl<T> Fragile<T> {
     /// Creates a new `Fragile` wrapping a `value`.
@@ -39,14 +41,18 @@ impl<T> Fragile<T> {
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
         Fragile {
-            value: ManuallyDrop::new(UnsafeCell::new(value)),
+            value: ManuallyDrop::new(UnsafeCell::new(Box::new(value))),
             thread_id: get_thread_id(),
         }
     }
 
+    pub(crate) fn is_same_thread(&self) -> bool {
+        get_thread_id() == self.thread_id
+    }
+
     #[inline(always)]
     fn assert_thread(&self) {
-        if get_thread_id() != self.thread_id {
+        if !self.is_same_thread() {
             panic!("trying to access wrapped value in fragile container from incorrect thread.");
         }
     }
@@ -62,7 +68,7 @@ impl<T> Fragile<T> {
         unsafe {
             let value = mem::replace(&mut self.value, mem::uninitialized());
             mem::forget(self);
-            ManuallyDrop::into_inner(value).into_inner()
+            *ManuallyDrop::into_inner(value).into_inner()
         }
     }
 
