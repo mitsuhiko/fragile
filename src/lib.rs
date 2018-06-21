@@ -1,8 +1,10 @@
 //! This library provides wrapper types that permit sending non `Send` types to
 //! other threads and use runtime checks to ensure safety.
 //!
-//! It provides two types: `Fragile<T>` and `Sticky<T>` which are similar in nature
-//! but have different behaviors with regards to how destructors are executed.
+//! It provides three types: `Fragile<T>` and `Sticky<T>` which are similar in nature
+//! but have different behaviors with regards to how destructors are executed and
+//! the extra `SemiSticky<T>` type which uses `Sticky<T>` if the value has a
+//! destructor and `Fragile<T>` if it does not.
 //!
 //! Both types wrap a value and provide a `Send` bound.  Neither of the types permit
 //! access to the enclosed value unless the thread that wrapped the value is attempting
