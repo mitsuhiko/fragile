@@ -45,8 +45,10 @@
 //! error did not cross a thread boundary yet extra information can be obtained.
 mod errors;
 mod fragile;
+mod semisticky;
 mod sticky;
 
 pub use errors::InvalidThreadAccess;
 pub use fragile::Fragile;
+pub use semisticky::SemiSticky;
 pub use sticky::Sticky;

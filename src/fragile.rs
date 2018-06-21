@@ -30,8 +30,6 @@ pub struct Fragile<T> {
     thread_id: usize,
 }
 
-unsafe impl<T> Sync for Fragile<T> {}
-
 impl<T> Fragile<T> {
     /// Creates a new `Fragile` wrapping a `value`.
     ///
@@ -46,13 +44,16 @@ impl<T> Fragile<T> {
         }
     }
 
-    pub(crate) fn is_same_thread(&self) -> bool {
+    /// Returns `true` if the access is valid.
+    ///
+    /// This will be `false` if the value was sent to another thread.
+    pub fn is_valid(&self) -> bool {
         get_thread_id() == self.thread_id
     }
 
     #[inline(always)]
     fn assert_thread(&self) {
-        if !self.is_same_thread() {
+        if !self.is_valid() {
             panic!("trying to access wrapped value in fragile container from incorrect thread.");
         }
     }

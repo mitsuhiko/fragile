@@ -44,7 +44,7 @@ impl<T> Drop for Sticky<T> {
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
             unsafe {
-                if self.is_same_thread() {
+                if self.is_valid() {
                     self.unsafe_take_value();
                 }
             }
@@ -91,14 +91,17 @@ impl<T> Sticky<T> {
         })
     }
 
+    /// Returns `true` if the access is valid.
+    ///
+    /// This will be `false` if the value was sent to another thread.
     #[inline(always)]
-    fn is_same_thread(&self) -> bool {
+    pub fn is_valid(&self) -> bool {
         unsafe { REGISTRY.with(|registry| (*registry.get()).0.contains_key(&self.item_id)) }
     }
 
     #[inline(always)]
     fn assert_thread(&self) {
-        if !self.is_same_thread() {
+        if !self.is_valid() {
             panic!("trying to access wrapped value in sticky container from incorrect thread.");
         }
     }
@@ -134,7 +137,7 @@ impl<T> Sticky<T> {
     /// as the one where the original value was created, otherwise the
     /// `Sticky` is returned as `Err(self)`.
     pub fn try_into_inner(self) -> Result<T, Self> {
-        if self.is_same_thread() {
+        if self.is_valid() {
             Ok(self.into_inner())
         } else {
             Err(self)
@@ -165,7 +168,7 @@ impl<T> Sticky<T> {
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
-        if self.is_same_thread() {
+        if self.is_valid() {
             unsafe { Ok(self.with_value(|value| &*value.get())) }
         } else {
             Err(InvalidThreadAccess)
@@ -175,8 +178,8 @@ impl<T> Sticky<T> {
     /// Tries to mutably borrow the wrapped value.
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get_mut(&self) -> Result<&T, InvalidThreadAccess> {
-        if self.is_same_thread() {
+    pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
+        if self.is_valid() {
             unsafe { Ok(self.with_value(|value| &mut *value.get())) }
         } else {
             Err(InvalidThreadAccess)
