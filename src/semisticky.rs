@@ -297,3 +297,13 @@ fn test_noop_drop_elsewhere() {
 
     assert_eq!(was_called.load(Ordering::SeqCst), true);
 }
+
+#[test]
+fn test_rc_sending() {
+    use std::rc::Rc;
+    use std::thread;
+    let val = SemiSticky::new(Rc::new(true));
+    thread::spawn(move || {
+        assert!(val.try_get().is_err());
+    }).join().unwrap();
+}

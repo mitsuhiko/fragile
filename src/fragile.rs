@@ -236,7 +236,7 @@ impl<T: fmt::Debug> fmt::Debug for Fragile<T> {
 // this type is sync because access can only ever happy from the same thread
 // that created it originally.  All other threads will be able to safely
 // call some basic operations on the reference and they will fail.
-unsafe impl<T: Sync> Sync for Fragile<T> {}
+unsafe impl<T> Sync for Fragile<T> {}
 
 // The entire point of this type is to be Send
 unsafe impl<T> Send for Fragile<T> {}
@@ -304,4 +304,25 @@ fn test_panic_on_drop_elsewhere() {
             .is_err()
     );
     assert_eq!(was_called.load(Ordering::SeqCst), false);
+}
+
+#[test]
+fn test_rc_sending() {
+    use std::rc::Rc;
+    use std::thread;
+    use std::sync::mpsc::channel;
+
+    let val = Fragile::new(Rc::new(true));
+    let (tx, rx) = channel();
+
+    let thread = thread::spawn(move || {
+        assert!(val.try_get().is_err());
+        let here = val;
+        tx.send(here).unwrap();
+    });
+
+    let rv = rx.recv().unwrap();
+    assert!(**rv.get());
+
+    thread.join().unwrap();
 }
