@@ -279,7 +279,7 @@ impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
 
 // similar as for fragile ths type is sync because it only accesses TLS data
 // which is thread local.  There is nothing that needs to be synchronized.
-unsafe impl<T: Sync> Sync for Sticky<T> {}
+unsafe impl<T> Sync for Sticky<T> {}
 
 // The entire point of this type is to be Send
 unsafe impl<T> Send for Sticky<T> {}
@@ -365,4 +365,14 @@ fn test_noop_drop_elsewhere() {
     }
 
     assert_eq!(was_called.load(Ordering::SeqCst), true);
+}
+
+#[test]
+fn test_rc_sending() {
+    use std::rc::Rc;
+    use std::thread;
+    let val = Sticky::new(Rc::new(true));
+    thread::spawn(move || {
+        assert!(val.try_get().is_err());
+    }).join().unwrap();
 }
