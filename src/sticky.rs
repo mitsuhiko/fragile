@@ -96,7 +96,8 @@ impl<T> Sticky<T> {
     /// This will be `false` if the value was sent to another thread.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        unsafe { REGISTRY.with(|registry| (*registry.get()).0.contains_key(&self.item_id)) }
+        // We use `try-with` here to avoid crashing if the TLS is already tearing down.
+        unsafe { REGISTRY.try_with(|registry| (*registry.get()).0.contains_key(&self.item_id)).unwrap_or(false) }
     }
 
     #[inline(always)]
