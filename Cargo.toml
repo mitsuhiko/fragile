@@ -1,6 +1,6 @@
 [package]
 name = "fragile"
-version = "0.2.1"
+version = "0.3.0"
 license = "Apache-2.0"
 description = "Provides wrapper types for sending non-send values to other threads."
 readme = "README.md"
