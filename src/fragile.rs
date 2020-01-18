@@ -1,4 +1,3 @@
-use std::cell::UnsafeCell;
 use std::cmp;
 use std::fmt;
 use std::mem;
@@ -26,7 +25,7 @@ pub(crate) fn get_thread_id() -> usize {
 /// the destructor will panic.  Alternatively you can use `Sticky<T>` which is
 /// not going to panic but might temporarily leak the value.
 pub struct Fragile<T> {
-    value: MaybeUninit<UnsafeCell<Box<T>>>,
+    value: MaybeUninit<Box<T>>,
     thread_id: usize,
 }
 
@@ -39,7 +38,7 @@ impl<T> Fragile<T> {
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
         Fragile {
-            value: MaybeUninit::new(UnsafeCell::new(Box::new(value))),
+            value: MaybeUninit::new(Box::new(value)),
             thread_id: get_thread_id(),
         }
     }
@@ -69,7 +68,7 @@ impl<T> Fragile<T> {
         unsafe {
             let rv = mem::replace(&mut self.value, MaybeUninit::uninit());
             mem::forget(self);
-            *rv.assume_init().into_inner()
+            *rv.assume_init()
         }
     }
 
@@ -94,7 +93,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
     pub fn get(&self) -> &T {
         self.assert_thread();
-        unsafe { &*(*self.value.as_ptr()).get() }
+        unsafe { &*self.value.as_ptr() }
     }
 
     /// Mutably borrows the wrapped value.
@@ -105,7 +104,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
     pub fn get_mut(&mut self) -> &mut T {
         self.assert_thread();
-        unsafe { &mut *(*self.value.as_ptr()).get() }
+        unsafe { &mut *self.value.as_mut_ptr() }
     }
 
     /// Tries to immutably borrow the wrapped value.
@@ -113,7 +112,7 @@ impl<T> Fragile<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
         if get_thread_id() == self.thread_id {
-            unsafe { Ok(&*(*self.value.as_ptr()).get()) }
+            unsafe { Ok(&*self.value.as_ptr()) }
         } else {
             Err(InvalidThreadAccess)
         }
@@ -124,7 +123,7 @@ impl<T> Fragile<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
         if get_thread_id() == self.thread_id {
-            unsafe { Ok(&mut *(*self.value.as_ptr()).get()) }
+            unsafe { Ok(&mut *self.value.as_mut_ptr()) }
         } else {
             Err(InvalidThreadAccess)
         }
