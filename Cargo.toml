@@ -8,3 +8,4 @@ authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 repository = "https://github.com/mitsuhiko/rust-fragile"
 homepage = "https://github.com/mitsuhiko/rust-fragile"
 keywords = ["send", "cell", "non-send", "send-wrapper", "failure"]
+edition = "2018"
