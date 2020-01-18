@@ -13,7 +13,9 @@ fn next_item_id() -> usize {
     unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
 }
 
-struct Registry(HashMap<usize, (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>)>);
+type RegistryMap = HashMap<usize, (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>)>;
+
+struct Registry(RegistryMap);
 
 impl Drop for Registry {
     fn drop(&mut self) {
@@ -74,7 +76,7 @@ impl<T> Sticky<T> {
             );
         });
         Sticky {
-            item_id: item_id,
+            item_id,
             _marker: PhantomData,
         }
     }
@@ -84,7 +86,7 @@ impl<T> Sticky<T> {
         REGISTRY.with(|registry| unsafe {
             let reg = &(*(*registry).get()).0;
             if let Some(item) = reg.get(&self.item_id) {
-                f(mem::transmute(&item.0))
+                f(&*(&item.0 as *const UnsafeCell<*mut ()> as *const UnsafeCell<Box<T>>))
             } else {
                 panic!("trying to access wrapped value in sticky container from incorrect thread.");
             }
