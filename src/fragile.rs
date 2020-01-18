@@ -253,8 +253,9 @@ fn test_basic() {
     assert!(val.try_get().is_ok());
     thread::spawn(move || {
         assert!(val.try_get().is_err());
-    }).join()
-        .unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -272,8 +273,9 @@ fn test_access_other_thread() {
     let val = Fragile::new(true);
     thread::spawn(move || {
         val.get();
-    }).join()
-        .unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -283,8 +285,9 @@ fn test_noop_drop_elsewhere() {
     thread::spawn(move || {
         // force the move
         val.try_get().ok();
-    }).join()
-        .unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -300,20 +303,19 @@ fn test_panic_on_drop_elsewhere() {
         }
     }
     let val = Fragile::new(X(was_called.clone()));
-    assert!(
-        thread::spawn(move || {
-            val.try_get().ok();
-        }).join()
-            .is_err()
-    );
+    assert!(thread::spawn(move || {
+        val.try_get().ok();
+    })
+    .join()
+    .is_err());
     assert_eq!(was_called.load(Ordering::SeqCst), false);
 }
 
 #[test]
 fn test_rc_sending() {
     use std::rc::Rc;
-    use std::thread;
     use std::sync::mpsc::channel;
+    use std::thread;
 
     let val = Fragile::new(Rc::new(true));
     let (tx, rx) = channel();

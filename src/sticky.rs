@@ -99,7 +99,11 @@ impl<T> Sticky<T> {
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
         // We use `try-with` here to avoid crashing if the TLS is already tearing down.
-        unsafe { REGISTRY.try_with(|registry| (*registry.get()).0.contains_key(&self.item_id)).unwrap_or(false) }
+        unsafe {
+            REGISTRY
+                .try_with(|registry| (*registry.get()).0.contains_key(&self.item_id))
+                .unwrap_or(false)
+        }
     }
 
     #[inline(always)]
@@ -296,8 +300,9 @@ fn test_basic() {
     assert!(val.try_get().is_ok());
     thread::spawn(move || {
         assert!(val.try_get().is_err());
-    }).join()
-        .unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -315,8 +320,9 @@ fn test_access_other_thread() {
     let val = Sticky::new(true);
     thread::spawn(move || {
         val.get();
-    }).join()
-        .unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]
@@ -354,17 +360,17 @@ fn test_noop_drop_elsewhere() {
             }
 
             let val = Sticky::new(X(was_called.clone()));
-            assert!(
-                thread::spawn(move || {
-                    // moves it here but do not deallocate
-                    val.try_get().ok();
-                }).join()
-                    .is_ok()
-            );
+            assert!(thread::spawn(move || {
+                // moves it here but do not deallocate
+                val.try_get().ok();
+            })
+            .join()
+            .is_ok());
 
             assert_eq!(was_called.load(Ordering::SeqCst), false);
-        }).join()
-            .unwrap();
+        })
+        .join()
+        .unwrap();
     }
 
     assert_eq!(was_called.load(Ordering::SeqCst), true);
@@ -377,5 +383,7 @@ fn test_rc_sending() {
     let val = Sticky::new(Rc::new(true));
     thread::spawn(move || {
         assert!(val.try_get().is_err());
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
 }
