@@ -1,10 +1,10 @@
 use std::cmp;
 use std::fmt;
 
-use errors::InvalidThreadAccess;
-use fragile::Fragile;
+use crate::errors::InvalidThreadAccess;
+use crate::fragile::Fragile;
 use std::mem;
-use sticky::Sticky;
+use crate::sticky::Sticky;
 
 enum SemiStickyImpl<T> {
     Fragile(Fragile<T>),

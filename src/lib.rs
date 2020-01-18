@@ -50,7 +50,7 @@ mod fragile;
 mod semisticky;
 mod sticky;
 
-pub use errors::InvalidThreadAccess;
-pub use fragile::Fragile;
-pub use semisticky::SemiSticky;
-pub use sticky::Sticky;
+pub use crate::errors::InvalidThreadAccess;
+pub use crate::fragile::Fragile;
+pub use crate::semisticky::SemiSticky;
+pub use crate::sticky::Sticky;

@@ -3,12 +3,12 @@ use std::cmp;
 use std::fmt;
 use std::mem;
 use std::mem::ManuallyDrop;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use errors::InvalidThreadAccess;
+use crate::errors::InvalidThreadAccess;
 
 fn next_thread_id() -> usize {
-    static mut COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+    static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
     unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
 }
 

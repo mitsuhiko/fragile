@@ -4,16 +4,16 @@ use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use errors::InvalidThreadAccess;
+use crate::errors::InvalidThreadAccess;
 
 fn next_item_id() -> usize {
-    static mut COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+    static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
     unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
 }
 
-struct Registry(HashMap<usize, (UnsafeCell<*mut ()>, Box<Fn(&UnsafeCell<*mut ()>)>)>);
+struct Registry(HashMap<usize, (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>)>);
 
 impl Drop for Registry {
     fn drop(&mut self) {
