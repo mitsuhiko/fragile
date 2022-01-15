@@ -338,7 +338,7 @@ fn test_drop_same_thread() {
     }
     let val = Sticky::new(X(was_called.clone()));
     mem::drop(val);
-    assert_eq!(was_called.load(Ordering::SeqCst), true);
+    assert!(was_called.load(Ordering::SeqCst));
 }
 
 #[test]
@@ -367,13 +367,13 @@ fn test_noop_drop_elsewhere() {
             .join()
             .is_ok());
 
-            assert_eq!(was_called.load(Ordering::SeqCst), false);
+            assert!(!was_called.load(Ordering::SeqCst));
         })
         .join()
         .unwrap();
     }
 
-    assert_eq!(was_called.load(Ordering::SeqCst), true);
+    assert!(was_called.load(Ordering::SeqCst));
 }
 
 #[test]
