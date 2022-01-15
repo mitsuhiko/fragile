@@ -241,6 +241,7 @@ impl<T: fmt::Debug> fmt::Debug for Fragile<T> {
 unsafe impl<T> Sync for Fragile<T> {}
 
 // The entire point of this type is to be Send
+#[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl<T> Send for Fragile<T> {}
 
 #[test]
