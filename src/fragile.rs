@@ -308,7 +308,7 @@ fn test_panic_on_drop_elsewhere() {
     })
     .join()
     .is_err());
-    assert_eq!(was_called.load(Ordering::SeqCst), false);
+    assert!(!was_called.load(Ordering::SeqCst));
 }
 
 #[test]
