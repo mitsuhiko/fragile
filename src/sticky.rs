@@ -9,14 +9,23 @@ use slab::Slab;
 use crate::errors::InvalidThreadAccess;
 use crate::thread_id;
 
-type RegistryEntry = (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>);
+struct RegistryEntry {
+    /// The pointer to the object stored in the registry. This is a type-erased
+    /// `Box<T>`.
+    ptr: *mut (),
+    /// The function that can be called on the above pointer to drop the object
+    /// and free its allocation.
+    drop: unsafe fn(*mut ()),
+}
 
 struct Registry(Slab<RegistryEntry>);
 
 impl Drop for Registry {
     fn drop(&mut self) {
         for (_, value) in self.0.iter() {
-            (value.1)(&value.0);
+            // SAFETY: This function is only called once, and is called with the
+            // pointer it was created with.
+            unsafe { (value.drop)(value.ptr) };
         }
     }
 }
@@ -59,14 +68,15 @@ impl<T> Sticky<T> {
     /// sticky wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
-        let entry: RegistryEntry = (
-            UnsafeCell::new(Box::into_raw(Box::new(value)) as *mut _),
-            // SAFETY: This callback will only be called with the above pointer.
-            Box::new(|cell| unsafe {
-                let b: Box<T> = Box::from_raw(*(cell.get() as *mut *mut T));
-                mem::drop(b);
-            }),
-        );
+        let entry = RegistryEntry {
+            ptr: Box::into_raw(Box::new(value)).cast(),
+            drop: |ptr| {
+                let ptr = ptr.cast::<T>();
+                // SAFETY: This callback will only be called once, with the
+                // above pointer.
+                drop(unsafe { Box::from_raw(ptr) });
+            },
+        };
 
         // SAFETY: The `REGISTRY` is not accessed recursively in this function.
         let item_id = REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) });
@@ -79,12 +89,12 @@ impl<T> Sticky<T> {
     }
 
     #[inline(always)]
-    fn with_value<F: FnOnce(&UnsafeCell<Box<T>>) -> R, R>(&self, f: F) -> R {
+    fn with_value<F: FnOnce(*mut T) -> R, R>(&self, f: F) -> R {
         self.assert_thread();
 
-        REGISTRY.with(|registry| unsafe {
-            let item = (*registry.get()).0.get(self.item_id).unwrap();
-            f(&*(&item.0 as *const UnsafeCell<*mut ()> as *const UnsafeCell<Box<T>>))
+        REGISTRY.with(|registry| {
+            let entry = unsafe { &*registry.get() }.0.get(self.item_id).unwrap();
+            f(entry.ptr.cast::<T>())
         })
     }
 
@@ -121,10 +131,9 @@ impl<T> Sticky<T> {
     unsafe fn unsafe_take_value(&mut self) -> T {
         let ptr = REGISTRY
             .with(|registry| (*registry.get()).0.remove(self.item_id))
-            .0
-            .into_inner();
-        let rv = Box::from_raw(ptr as *mut T);
-        *rv
+            .ptr
+            .cast::<T>();
+        *Box::from_raw(ptr)
     }
 
     /// Consumes the `Sticky`, returning the wrapped value if successful.
@@ -147,7 +156,7 @@ impl<T> Sticky<T> {
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
     pub fn get(&self) -> &T {
-        self.with_value(|value| unsafe { &*value.get() })
+        self.with_value(|value| unsafe { &*value })
     }
 
     /// Mutably borrows the wrapped value.
@@ -157,7 +166,7 @@ impl<T> Sticky<T> {
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
     pub fn get_mut(&mut self) -> &mut T {
-        self.with_value(|value| unsafe { &mut *value.get() })
+        self.with_value(|value| unsafe { &mut *value })
     }
 
     /// Tries to immutably borrow the wrapped value.
@@ -165,7 +174,7 @@ impl<T> Sticky<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
         if self.is_valid() {
-            unsafe { Ok(self.with_value(|value| &*value.get())) }
+            Ok(self.with_value(|value| unsafe { &*value }))
         } else {
             Err(InvalidThreadAccess)
         }
@@ -176,7 +185,7 @@ impl<T> Sticky<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
         if self.is_valid() {
-            unsafe { Ok(self.with_value(|value| &mut *value.get())) }
+            Ok(self.with_value(|value| unsafe { &mut *value }))
         } else {
             Err(InvalidThreadAccess)
         }
