@@ -49,6 +49,7 @@ mod errors;
 mod fragile;
 mod semisticky;
 mod sticky;
+mod thread_id;
 
 pub use crate::errors::InvalidThreadAccess;
 pub use crate::fragile::Fragile;

@@ -2,19 +2,9 @@ use std::cmp;
 use std::fmt;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::errors::InvalidThreadAccess;
-
-fn next_thread_id() -> usize {
-    static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
-    unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
-}
-
-pub(crate) fn get_thread_id() -> usize {
-    thread_local!(static THREAD_ID: usize = next_thread_id());
-    THREAD_ID.with(|&x| x)
-}
+use crate::thread_id;
 
 /// A `Fragile<T>` wraps a non sendable `T` to be safely send to other threads.
 ///
@@ -39,7 +29,7 @@ impl<T> Fragile<T> {
     pub fn new(value: T) -> Self {
         Fragile {
             value: MaybeUninit::new(Box::new(value)),
-            thread_id: get_thread_id(),
+            thread_id: thread_id::get(),
         }
     }
 
@@ -47,7 +37,7 @@ impl<T> Fragile<T> {
     ///
     /// This will be `false` if the value was sent to another thread.
     pub fn is_valid(&self) -> bool {
-        get_thread_id() == self.thread_id
+        thread_id::get() == self.thread_id
     }
 
     #[inline(always)]
@@ -78,7 +68,7 @@ impl<T> Fragile<T> {
     /// as the one where the original value was created, otherwise the
     /// `Fragile` is returned as `Err(self)`.
     pub fn try_into_inner(self) -> Result<T, Self> {
-        if get_thread_id() == self.thread_id {
+        if thread_id::get() == self.thread_id {
             Ok(self.into_inner())
         } else {
             Err(self)
@@ -111,7 +101,7 @@ impl<T> Fragile<T> {
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
-        if get_thread_id() == self.thread_id {
+        if thread_id::get() == self.thread_id {
             unsafe { Ok(&*self.value.as_ptr()) }
         } else {
             Err(InvalidThreadAccess)
@@ -122,7 +112,7 @@ impl<T> Fragile<T> {
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
-        if get_thread_id() == self.thread_id {
+        if thread_id::get() == self.thread_id {
             unsafe { Ok(&mut *self.value.as_mut_ptr()) }
         } else {
             Err(InvalidThreadAccess)
@@ -133,7 +123,7 @@ impl<T> Fragile<T> {
 impl<T> Drop for Fragile<T> {
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
-            if get_thread_id() == self.thread_id {
+            if thread_id::get() == self.thread_id {
                 unsafe {
                     let rv = mem::replace(&mut self.value, MaybeUninit::uninit());
                     rv.assume_init();

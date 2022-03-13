@@ -1,21 +1,17 @@
 use std::cell::UnsafeCell;
 use std::cmp;
-use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+use slab::Slab;
 
 use crate::errors::InvalidThreadAccess;
+use crate::thread_id;
 
-fn next_item_id() -> usize {
-    static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
-    unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
-}
+type RegistryEntry = (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>);
 
-type RegistryMap = HashMap<usize, (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>)>;
-
-struct Registry(RegistryMap);
+struct Registry(Slab<RegistryEntry>);
 
 impl Drop for Registry {
     fn drop(&mut self) {
@@ -25,7 +21,7 @@ impl Drop for Registry {
     }
 }
 
-thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Default::default())));
+thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Slab::new())));
 
 /// A `Sticky<T>` keeps a value T stored in a thread.
 ///
@@ -39,6 +35,7 @@ thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(D
 /// of destructors for TLS apply.
 pub struct Sticky<T> {
     item_id: usize,
+    thread_id: usize,
     _marker: PhantomData<*mut T>,
 }
 
@@ -62,34 +59,32 @@ impl<T> Sticky<T> {
     /// sticky wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
-        let item_id = next_item_id();
-        REGISTRY.with(|registry| unsafe {
-            (*registry.get()).0.insert(
-                item_id,
-                (
-                    UnsafeCell::new(Box::into_raw(Box::new(value)) as *mut _),
-                    Box::new(|cell| {
-                        let b: Box<T> = Box::from_raw(*(cell.get() as *mut *mut T));
-                        mem::drop(b);
-                    }),
-                ),
-            );
-        });
+        let entry: RegistryEntry = (
+            UnsafeCell::new(Box::into_raw(Box::new(value)) as *mut _),
+            // SAFETY: This callback will only be called with the above pointer.
+            Box::new(|cell| unsafe {
+                let b: Box<T> = Box::from_raw(*(cell.get() as *mut *mut T));
+                mem::drop(b);
+            }),
+        );
+
+        // SAFETY: The `REGISTRY` is not accessed recursively in this function.
+        let item_id = REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) });
+
         Sticky {
             item_id,
+            thread_id: thread_id::get(),
             _marker: PhantomData,
         }
     }
 
     #[inline(always)]
     fn with_value<F: FnOnce(&UnsafeCell<Box<T>>) -> R, R>(&self, f: F) -> R {
+        self.assert_thread();
+
         REGISTRY.with(|registry| unsafe {
-            let reg = &(*(*registry).get()).0;
-            if let Some(item) = reg.get(&self.item_id) {
-                f(&*(&item.0 as *const UnsafeCell<*mut ()> as *const UnsafeCell<Box<T>>))
-            } else {
-                panic!("trying to access wrapped value in sticky container from incorrect thread.");
-            }
+            let item = (*registry.get()).0.get(self.item_id).unwrap();
+            f(&*(&item.0 as *const UnsafeCell<*mut ()> as *const UnsafeCell<Box<T>>))
         })
     }
 
@@ -98,12 +93,7 @@ impl<T> Sticky<T> {
     /// This will be `false` if the value was sent to another thread.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        // We use `try-with` here to avoid crashing if the TLS is already tearing down.
-        unsafe {
-            REGISTRY
-                .try_with(|registry| (*registry.get()).0.contains_key(&self.item_id))
-                .unwrap_or(false)
-        }
+        thread_id::get() == self.thread_id
     }
 
     #[inline(always)]
@@ -130,8 +120,7 @@ impl<T> Sticky<T> {
 
     unsafe fn unsafe_take_value(&mut self) -> T {
         let ptr = REGISTRY
-            .with(|registry| (*registry.get()).0.remove(&self.item_id))
-            .unwrap()
+            .with(|registry| (*registry.get()).0.remove(self.item_id))
             .0
             .into_inner();
         let rv = Box::from_raw(ptr as *mut T);
