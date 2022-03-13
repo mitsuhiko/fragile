@@ -1,7 +1,7 @@
 use std::cmp;
 use std::fmt;
 use std::mem;
-use std::mem::MaybeUninit;
+use std::mem::ManuallyDrop;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::errors::InvalidThreadAccess;
@@ -25,7 +25,9 @@ pub(crate) fn get_thread_id() -> usize {
 /// the destructor will panic.  Alternatively you can use `Sticky<T>` which is
 /// not going to panic but might temporarily leak the value.
 pub struct Fragile<T> {
-    value: MaybeUninit<Box<T>>,
+    // ManuallyDrop is necessary because we need to move out of this `Box` without running the
+    // Drop code in functions like `into_inner`.
+    value: ManuallyDrop<Box<T>>,
     thread_id: usize,
 }
 
@@ -38,7 +40,7 @@ impl<T> Fragile<T> {
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
         Fragile {
-            value: MaybeUninit::new(Box::new(value)),
+            value: ManuallyDrop::new(Box::new(value)),
             thread_id: get_thread_id(),
         }
     }
@@ -63,13 +65,14 @@ impl<T> Fragile<T> {
     ///
     /// Panics if called from a different thread than the one where the
     /// original value was created.
-    pub fn into_inner(mut self) -> T {
+    pub fn into_inner(self) -> T {
         self.assert_thread();
-        unsafe {
-            let rv = mem::replace(&mut self.value, MaybeUninit::uninit());
-            mem::forget(self);
-            *rv.assume_init()
-        }
+
+        let mut this = ManuallyDrop::new(self);
+
+        // SAFETY: `this` is not accessed beyond this point, and because it's in a ManuallyDrop its
+        // destructor is not run.
+        *unsafe { ManuallyDrop::take(&mut this.value) }
     }
 
     /// Consumes the `Fragile`, returning the wrapped value if successful.
@@ -93,7 +96,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
     pub fn get(&self) -> &T {
         self.assert_thread();
-        unsafe { &*self.value.as_ptr() }
+        &**self.value
     }
 
     /// Mutably borrows the wrapped value.
@@ -104,7 +107,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
     pub fn get_mut(&mut self) -> &mut T {
         self.assert_thread();
-        unsafe { &mut *self.value.as_mut_ptr() }
+        &mut **self.value
     }
 
     /// Tries to immutably borrow the wrapped value.
@@ -112,7 +115,7 @@ impl<T> Fragile<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
         if get_thread_id() == self.thread_id {
-            unsafe { Ok(&*self.value.as_ptr()) }
+            Ok(&**self.value)
         } else {
             Err(InvalidThreadAccess)
         }
@@ -123,7 +126,7 @@ impl<T> Fragile<T> {
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
         if get_thread_id() == self.thread_id {
-            unsafe { Ok(&mut *self.value.as_mut_ptr()) }
+            Ok(&mut **self.value)
         } else {
             Err(InvalidThreadAccess)
         }
@@ -134,10 +137,8 @@ impl<T> Drop for Fragile<T> {
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
             if get_thread_id() == self.thread_id {
-                unsafe {
-                    let rv = mem::replace(&mut self.value, MaybeUninit::uninit());
-                    rv.assume_init();
-                }
+                // SAFETY: `ManuallyDrop::drop` cannot be called after this point.
+                unsafe { ManuallyDrop::drop(&mut self.value) };
             } else {
                 panic!("destructor of fragile object ran on wrong thread");
             }
