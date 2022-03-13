@@ -2,6 +2,7 @@ use std::cmp;
 use std::fmt;
 use std::mem;
 use std::mem::MaybeUninit;
+use std::num::NonZeroUsize;
 
 use crate::errors::InvalidThreadAccess;
 use crate::thread_id;
@@ -16,7 +17,7 @@ use crate::thread_id;
 /// not going to panic but might temporarily leak the value.
 pub struct Fragile<T> {
     value: MaybeUninit<Box<T>>,
-    thread_id: usize,
+    thread_id: NonZeroUsize,
 }
 
 impl<T> Fragile<T> {

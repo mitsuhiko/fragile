@@ -3,6 +3,7 @@ use std::cmp;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
+use std::num::NonZeroUsize;
 
 use slab::Slab;
 
@@ -35,7 +36,7 @@ thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(S
 /// of destructors for TLS apply.
 pub struct Sticky<T> {
     item_id: usize,
-    thread_id: usize,
+    thread_id: NonZeroUsize,
     _marker: PhantomData<*mut T>,
 }
 
