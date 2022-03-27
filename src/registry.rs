@@ -14,17 +14,7 @@ mod slab_impl {
 
     use super::Entry;
 
-    struct Registry(slab::Slab<Entry>);
-
-    impl Drop for Registry {
-        fn drop(&mut self) {
-            for (_, value) in self.0.iter() {
-                // SAFETY: This function is only called once, and is called with the
-                // pointer it was created with.
-                unsafe { (value.drop)(value.ptr) };
-            }
-        }
-    }
+    pub struct Registry(pub slab::Slab<Entry>);
 
     thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(slab::Slab::new())));
 
@@ -32,8 +22,6 @@ mod slab_impl {
 
     pub fn insert(thread_id: NonZeroUsize, entry: Entry) -> ItemId {
         let _ = thread_id;
-
-        // SAFETY: The `REGISTRY` is not accessed recursively in this function.
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) })
     }
 
@@ -55,24 +43,13 @@ mod map_impl {
 
     use super::Entry;
 
-    struct Registry(std::collections::HashMap<NonZeroUsize, Entry>);
-
-    impl Drop for Registry {
-        fn drop(&mut self) {
-            for (_, value) in self.0.iter() {
-                // SAFETY: This function is only called once, and is called with the
-                // pointer it was created with.
-                unsafe { (value.drop)(value.ptr) };
-            }
-        }
-    }
+    pub struct Registry(pub std::collections::HashMap<NonZeroUsize, Entry>);
 
     thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Default::default())));
 
     pub type ItemId = ();
 
     pub fn insert(thread_id: NonZeroUsize, entry: Entry) -> ItemId {
-        // SAFETY: The `REGISTRY` is not accessed recursively in this function.
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(thread_id, entry) });
     }
 
@@ -92,3 +69,13 @@ pub use self::slab_impl::*;
 
 #[cfg(not(feature = "slab"))]
 pub use self::map_impl::*;
+
+impl Drop for Registry {
+    fn drop(&mut self) {
+        for (_, value) in self.0.iter() {
+            // SAFETY: This function is only called once, and is called with the
+            // pointer it was created with.
+            unsafe { (value.drop)(value.ptr) };
+        }
+    }
+}
