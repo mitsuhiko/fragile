@@ -45,8 +45,15 @@
 //! non `Send` types but want to work with a `Send` error type.  In that case the non
 //! sendable extra information can be contained within the error and in cases where the
 //! error did not cross a thread boundary yet extra information can be obtained.
+//!
+//! # Features
+//!
+//! By default the crate has no dependencies.  Optionally the `slab` feature can
+//! be enabled which optimizes the internal storage of the [`Sticky`] type to
+//! make it use a [`slab`](https://docs.rs/slab/latest/slab/) instead.
 mod errors;
 mod fragile;
+mod registry;
 mod semisticky;
 mod sticky;
 mod thread_id;

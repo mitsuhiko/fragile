@@ -11,6 +11,7 @@ doc:
 
 test:
 	@cargo test
+	@cargo test --all-features
 
 format:
 	@rustup component add rustfmt 2> /dev/null

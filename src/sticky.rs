@@ -1,37 +1,14 @@
-use std::cell::UnsafeCell;
+#![allow(clippy::unit_arg)]
+
 use std::cmp;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
 use std::num::NonZeroUsize;
 
-use slab::Slab;
-
 use crate::errors::InvalidThreadAccess;
+use crate::registry;
 use crate::thread_id;
-
-struct RegistryEntry {
-    /// The pointer to the object stored in the registry. This is a type-erased
-    /// `Box<T>`.
-    ptr: *mut (),
-    /// The function that can be called on the above pointer to drop the object
-    /// and free its allocation.
-    drop: unsafe fn(*mut ()),
-}
-
-struct Registry(Slab<RegistryEntry>);
-
-impl Drop for Registry {
-    fn drop(&mut self) {
-        for (_, value) in self.0.iter() {
-            // SAFETY: This function is only called once, and is called with the
-            // pointer it was created with.
-            unsafe { (value.drop)(value.ptr) };
-        }
-    }
-}
-
-thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Slab::new())));
 
 /// A `Sticky<T>` keeps a value T stored in a thread.
 ///
@@ -48,7 +25,7 @@ thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(S
 /// As this uses TLS internally the general rules about the platform limitations
 /// of destructors for TLS apply.
 pub struct Sticky<T: 'static> {
-    item_id: usize,
+    item_id: registry::ItemId,
     thread_id: NonZeroUsize,
     _marker: PhantomData<*mut T>,
 }
@@ -73,7 +50,7 @@ impl<T> Sticky<T> {
     /// sticky wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.
     pub fn new(value: T) -> Self {
-        let entry = RegistryEntry {
+        let entry = registry::Entry {
             ptr: Box::into_raw(Box::new(value)).cast(),
             drop: |ptr| {
                 let ptr = ptr.cast::<T>();
@@ -83,12 +60,12 @@ impl<T> Sticky<T> {
             },
         };
 
-        // SAFETY: The `REGISTRY` is not accessed recursively in this function.
-        let item_id = REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) });
+        let thread_id = thread_id::get();
+        let item_id = registry::insert(thread_id, entry);
 
         Sticky {
             item_id,
-            thread_id: thread_id::get(),
+            thread_id,
             _marker: PhantomData,
         }
     }
@@ -97,8 +74,7 @@ impl<T> Sticky<T> {
     fn with_value<F: FnOnce(*mut T) -> R, R>(&self, f: F) -> R {
         self.assert_thread();
 
-        REGISTRY.with(|registry| {
-            let entry = unsafe { &*registry.get() }.0.get(self.item_id).unwrap();
+        registry::with(self.item_id, self.thread_id, |entry| {
             f(entry.ptr.cast::<T>())
         })
     }
@@ -134,8 +110,7 @@ impl<T> Sticky<T> {
     }
 
     unsafe fn unsafe_take_value(&mut self) -> T {
-        let ptr = REGISTRY
-            .with(|registry| (*registry.get()).0.remove(self.item_id))
+        let ptr = registry::remove(self.item_id, self.thread_id)
             .ptr
             .cast::<T>();
         *Box::from_raw(ptr)

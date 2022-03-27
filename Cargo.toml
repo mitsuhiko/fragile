@@ -11,4 +11,4 @@ keywords = ["send", "cell", "non-send", "send-wrapper", "failure"]
 edition = "2018"
 
 [dependencies]
-slab = "0.4.5"
+slab = { version = "0.4.5", optional = true }
