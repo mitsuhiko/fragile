@@ -47,6 +47,7 @@
 //! error did not cross a thread boundary yet extra information can be obtained.
 mod errors;
 mod fragile;
+mod registry;
 mod semisticky;
 mod sticky;
 mod thread_id;
