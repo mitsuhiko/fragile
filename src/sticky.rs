@@ -35,15 +35,19 @@ thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(S
 
 /// A `Sticky<T>` keeps a value T stored in a thread.
 ///
-/// This type works similar in nature to `Fragile<T>` and exposes the
-/// same interface.  The difference is that whereas `Fragile<T>` has
+/// This type works similar in nature to `Fragile<T>` and exposes a
+/// similar interface.  The difference is that whereas `Fragile<T>` has
 /// its destructor called in the thread where the value was sent, a
 /// `Sticky<T>` that is moved to another thread will have the internal
 /// destructor called when the originating thread tears down.
 ///
+/// Because `Sticky<T>` allows values to be kept alive for longer than the
+/// `Sticky<T>` itself, it requires all its contents to be `'static` for
+/// soundness.
+///
 /// As this uses TLS internally the general rules about the platform limitations
 /// of destructors for TLS apply.
-pub struct Sticky<T> {
+pub struct Sticky<T: 'static> {
     item_id: usize,
     thread_id: NonZeroUsize,
     _marker: PhantomData<*mut T>,

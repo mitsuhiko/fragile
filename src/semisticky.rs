@@ -6,7 +6,7 @@ use crate::fragile::Fragile;
 use crate::sticky::Sticky;
 use std::mem;
 
-enum SemiStickyImpl<T> {
+enum SemiStickyImpl<T: 'static> {
     Fragile(Fragile<T>),
     Sticky(Sticky<T>),
 }
@@ -16,7 +16,9 @@ enum SemiStickyImpl<T> {
 /// This is a combined version of `Fragile<T>` and `Sticky<T>`.  If the type
 /// does not have a drop it will effectively be a `Fragile<T>`, otherwise it
 /// will be internally behave like a `Sticky<T>`.
-pub struct SemiSticky<T> {
+///
+/// This type requires `T: 'static` for the same reasons as `Sticky<T>`.
+pub struct SemiSticky<T: 'static> {
     inner: SemiStickyImpl<T>,
 }
 
