@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::errors::InvalidThreadAccess;
 
 fn next_item_id() -> usize {
-    static mut COUNTER: AtomicUsize = AtomicUsize::new(0);
-    unsafe { COUNTER.fetch_add(1, Ordering::SeqCst) }
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
 type RegistryMap = HashMap<usize, (UnsafeCell<*mut ()>, Box<dyn Fn(&UnsafeCell<*mut ()>)>)>;
