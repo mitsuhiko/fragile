@@ -2,6 +2,10 @@
 
 All notable changes to similar are documented here.
 
+## 1.2.1
+
+* Fixed non slab versions only allowing a single sticky.
+
 ## 1.2.0
 
 Note on safety: the `Sticky` and `SemiSticky` types allow data to live

@@ -40,27 +40,41 @@ mod slab_impl {
 mod map_impl {
     use std::cell::UnsafeCell;
     use std::num::NonZeroUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::Entry;
 
-    pub struct Registry(pub std::collections::HashMap<NonZeroUsize, Entry>);
+    pub struct Registry(pub std::collections::HashMap<(NonZeroUsize, NonZeroUsize), Entry>);
 
     thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Default::default())));
 
-    pub type ItemId = ();
+    pub type ItemId = NonZeroUsize;
+
+    fn next_item_id() -> NonZeroUsize {
+        static COUNTER: AtomicUsize = AtomicUsize::new(1);
+        NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::SeqCst))
+            .expect("more than usize::MAX items")
+    }
 
     pub fn insert(thread_id: NonZeroUsize, entry: Entry) -> ItemId {
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(thread_id, entry) });
+        let item_id = next_item_id();
+        REGISTRY
+            .with(|registry| unsafe { (*registry.get()).0.insert((thread_id, item_id), entry) });
+        item_id
     }
 
     pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, thread_id: NonZeroUsize, f: F) -> R {
-        let _ = item_id;
-        REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(&thread_id).unwrap()))
+        REGISTRY.with(|registry| {
+            f(unsafe { &*registry.get() }
+                .0
+                .get(&(thread_id, item_id))
+                .unwrap())
+        })
     }
 
     pub fn remove(item_id: ItemId, thread_id: NonZeroUsize) -> Entry {
-        let _ = item_id;
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(&thread_id).unwrap() })
+        REGISTRY
+            .with(|registry| unsafe { (*registry.get()).0.remove(&(thread_id, item_id)).unwrap() })
     }
 }
 

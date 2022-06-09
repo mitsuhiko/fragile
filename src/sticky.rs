@@ -365,3 +365,22 @@ fn test_rc_sending() {
     .join()
     .unwrap();
 }
+
+#[test]
+fn test_two_stickies() {
+    struct Wat;
+
+    impl Drop for Wat {
+        fn drop(&mut self) {
+            // do nothing
+        }
+    }
+
+    let s1 = Sticky::new(Wat);
+    let s2 = Sticky::new(Wat);
+
+    // make sure all is well
+
+    drop(s1);
+    drop(s2);
+}
