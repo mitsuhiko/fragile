@@ -4,11 +4,11 @@ use std::cmp;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem;
-use std::num::NonZeroUsize;
+use std::thread;
+use std::thread::ThreadId;
 
 use crate::errors::InvalidThreadAccess;
 use crate::registry;
-use crate::thread_id;
 
 /// A `Sticky<T>` keeps a value T stored in a thread.
 ///
@@ -26,7 +26,7 @@ use crate::thread_id;
 /// of destructors for TLS apply.
 pub struct Sticky<T: 'static> {
     item_id: registry::ItemId,
-    thread_id: NonZeroUsize,
+    thread_id: ThreadId,
     _marker: PhantomData<*mut T>,
 }
 
@@ -60,7 +60,7 @@ impl<T> Sticky<T> {
             },
         };
 
-        let thread_id = thread_id::get();
+        let thread_id = thread::current().id();
         let item_id = registry::insert(thread_id, entry);
 
         Sticky {
@@ -84,7 +84,7 @@ impl<T> Sticky<T> {
     /// This will be `false` if the value was sent to another thread.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        thread_id::get() == self.thread_id
+        thread::current().id() == self.thread_id
     }
 
     #[inline(always)]
