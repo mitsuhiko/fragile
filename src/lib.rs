@@ -3,12 +3,15 @@
 //!
 //! The types provided by this crate wrap a value and provide a `Send` bound.  None of
 //! the types permit access to the enclosed value unless the thread that wrapped the
-//! value is attempting to access it.  In the 1.2 release family only [`Fragile`] is
-//! sound to use.
+//! value is attempting to access it.
 //!
 //! A [`Fragile`] will actually send the `T` from thread to thread but will only
 //! permit the original thread to invoke the destructor.  If the value gets dropped
 //! in a different thread, the destructor will panic.
+//!
+//! **Warning:** The 1.2 release family of fragile have broken `Sticky` and `SemiSticky`
+//! types.  Because the behavior requires an API change it can only be corrected by
+//! a major semver update.
 //!
 //! # Example
 //!
