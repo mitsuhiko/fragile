@@ -103,6 +103,8 @@ mod semisticky;
 mod sticky;
 mod thread_id;
 
+use std::marker::PhantomData;
+
 pub use crate::errors::InvalidThreadAccess;
 pub use crate::fragile::Fragile;
 pub use crate::semisticky::SemiSticky;
@@ -112,7 +114,7 @@ pub use crate::sticky::Sticky;
 ///
 /// For more information about how these work see the documentation of
 /// [`stack_token!`] which is the only way to create this token.
-pub struct StackToken(*const ());
+pub struct StackToken(PhantomData<*const ()>);
 
 impl StackToken {
     /// Stack tokens must only be created on the stack.
@@ -120,7 +122,7 @@ impl StackToken {
     pub unsafe fn __private_new() -> StackToken {
         // we place a const pointer in there to get a type
         // that is neither Send nor Sync.
-        StackToken(std::ptr::null())
+        StackToken(PhantomData)
     }
 }
 
