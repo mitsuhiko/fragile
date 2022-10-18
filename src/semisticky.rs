@@ -160,7 +160,7 @@ impl<T: Eq> Eq for SemiSticky<T> {}
 impl<T: PartialOrd> PartialOrd for SemiSticky<T> {
     #[inline]
     fn partial_cmp(&self, other: &SemiSticky<T>) -> Option<cmp::Ordering> {
-        self.get().partial_cmp(&*other.get())
+        self.get().partial_cmp(other.get())
     }
 
     #[inline]
@@ -187,7 +187,7 @@ impl<T: PartialOrd> PartialOrd for SemiSticky<T> {
 impl<T: Ord> Ord for SemiSticky<T> {
     #[inline]
     fn cmp(&self, other: &SemiSticky<T>) -> cmp::Ordering {
-        self.get().cmp(&*other.get())
+        self.get().cmp(other.get())
     }
 }
 

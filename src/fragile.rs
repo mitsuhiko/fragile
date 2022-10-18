@@ -170,7 +170,7 @@ impl<T: Eq> Eq for Fragile<T> {}
 impl<T: PartialOrd> PartialOrd for Fragile<T> {
     #[inline]
     fn partial_cmp(&self, other: &Fragile<T>) -> Option<cmp::Ordering> {
-        self.get().partial_cmp(&*other.get())
+        self.get().partial_cmp(other.get())
     }
 
     #[inline]
@@ -197,7 +197,7 @@ impl<T: PartialOrd> PartialOrd for Fragile<T> {
 impl<T: Ord> Ord for Fragile<T> {
     #[inline]
     fn cmp(&self, other: &Fragile<T>) -> cmp::Ordering {
-        self.get().cmp(&*other.get())
+        self.get().cmp(other.get())
     }
 }
 

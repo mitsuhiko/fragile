@@ -205,7 +205,7 @@ impl<T: Eq> Eq for Sticky<T> {}
 impl<T: PartialOrd> PartialOrd for Sticky<T> {
     #[inline]
     fn partial_cmp(&self, other: &Sticky<T>) -> Option<cmp::Ordering> {
-        self.get().partial_cmp(&*other.get())
+        self.get().partial_cmp(other.get())
     }
 
     #[inline]
@@ -232,7 +232,7 @@ impl<T: PartialOrd> PartialOrd for Sticky<T> {
 impl<T: Ord> Ord for Sticky<T> {
     #[inline]
     fn cmp(&self, other: &Sticky<T>) -> cmp::Ordering {
-        self.get().cmp(&*other.get())
+        self.get().cmp(other.get())
     }
 }
 
