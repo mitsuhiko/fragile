@@ -7,6 +7,8 @@ All notable changes to similar are documented here.
 * `Fragile` no longer boxes internally.
 * `Sticky` and `SemiSticky` now require the use of stack tokens.
   For more information see [#26](https://github.com/mitsuhiko/fragile/issues/26)
+* `Sticky` now tries to drop entries from the thread local registry eagerly
+  if it's dropped on the right thread.
 
 ## 1.2.1
 

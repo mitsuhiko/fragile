@@ -35,11 +35,23 @@ pub struct Sticky<T: 'static> {
 
 impl<T> Drop for Sticky<T> {
     fn drop(&mut self) {
+        // if the type needs dropping we can only do so on the
+        // right thread.  worst case we leak the value until the
+        // thread dies.
         if mem::needs_drop::<T>() {
             unsafe {
                 if self.is_valid() {
                     self.unsafe_take_value();
                 }
+            }
+
+        // otherwise we take the liberty to drop the value
+        // right here and now.  We can however only do that if
+        // we are on the right thread.  If we are not, we again
+        // need to wait for the thread to shut down.
+        } else if let Some(entry) = registry::try_remove(self.item_id, self.thread_id) {
+            unsafe {
+                (entry.drop)(entry.ptr);
             }
         }
     }

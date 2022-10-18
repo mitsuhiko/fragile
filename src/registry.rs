@@ -34,6 +34,11 @@ mod slab_impl {
         let _ = thread_id;
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(item_id) })
     }
+
+    pub fn try_remove(item_id: ItemId, thread_id: NonZeroUsize) -> Option<Entry> {
+        let _ = thread_id;
+        REGISTRY.with(|registry| unsafe { (*registry.get()).0.try_remove(item_id) })
+    }
 }
 
 #[cfg(not(feature = "slab"))]
@@ -75,6 +80,10 @@ mod map_impl {
     pub fn remove(item_id: ItemId, thread_id: NonZeroUsize) -> Entry {
         REGISTRY
             .with(|registry| unsafe { (*registry.get()).0.remove(&(thread_id, item_id)).unwrap() })
+    }
+
+    pub fn try_remove(item_id: ItemId, thread_id: NonZeroUsize) -> Option<Entry> {
+        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(&(thread_id, item_id)) })
     }
 }
 
