@@ -2,6 +2,10 @@
 
 All notable changes to similar are documented here.
 
+## 1.3.0
+
+* `Fragile` no longer boxes internally.
+
 ## 1.2.1
 
 * Fixed non slab versions only allowing a single sticky.
