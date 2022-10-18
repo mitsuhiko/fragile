@@ -9,10 +9,12 @@
 This library provides wrapper types that permit sending non Send types to other
 threads and use runtime checks to ensure safety.
 
-It provides two types: `Fragile<T>` and `Sticky<T>` which are similar in nature but
-have different behaviors with regards to how destructors are executed.  The former
-will panic if the destructor is called in another thread, the latter will temporarily
-leak the object until the thread shuts down.
+It provides the `Fragile<T>`, `Sticky<T>` and `SemiSticky<T>` types which are
+similar in nature but have different behaviors with regards to how destructors
+are executed.  The `Fragile<T>` will panic if the destructor is called in another
+thread, `Sticky<T>` will temporarily leak the object until the thread shuts down.
+`SemiSticky<T>` is a compromise of the two.  It behaves like `Sticky<T>` but it
+avoids the use of thread local storage if the type does not need `Drop`.
 
 ## Example
 

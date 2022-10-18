@@ -6,9 +6,9 @@
 //! the extra [`SemiSticky`] type which uses [`Sticky`] if the value has a
 //! destructor and [`Fragile`] if it does not.
 //!
-//! Both types wrap a value and provide a `Send` bound.  Neither of the types permit
+//! All three types wrap a value and provide a `Send` bound.  Neither of the types permit
 //! access to the enclosed value unless the thread that wrapped the value is attempting
-//! to access it.  The difference between the two types starts playing a role once
+//! to access it.  The difference between the types starts playing a role once
 //! destructors are involved.
 //!
 //! A [`Fragile`] will actually send the `T` from thread to thread but will only
@@ -18,11 +18,14 @@
 //! A [`Sticky`] on the other hand does not actually send the `T` around but keeps
 //! it stored in the original thread's thread local storage.  If it gets dropped
 //! in the originating thread it gets cleaned up immediately, otherwise it leaks
-//! until the thread shuts down naturally.  [`Sticky`] (and by extension
-//! [`SemiSticky`]) because it borrows into the TLS also requires you to
-//! "prove" that you are not doing any funny business with the borrowed value
-//! that lives for longer than the current stack frame which results in a slightly
-//! more complex API.
+//! until the thread shuts down naturally.  [`Sticky`] because it borrows into the
+//! TLS also requires you to "prove" that you are not doing any funny business with
+//! the borrowed value that lives for longer than the current stack frame which
+//! results in a slightly more complex API.
+//!
+//! There is a third typed called [`SemiSticky`] which shares the API with [`Sticky`]
+//! but internally uses a boxed [`Fragile`] if the type does not actually need a dtor
+//! in which case [`Fragile`] is preferred.
 //!
 //! # Fragile Usage
 //!
@@ -77,6 +80,16 @@
 //! non `Send` types but want to work with a `Send` error type.  In that case the non
 //! sendable extra information can be contained within the error and in cases where the
 //! error did not cross a thread boundary yet extra information can be obtained.
+//!
+//! # Drop / Cleanup Behavior
+//!
+//! All types will try to eagerly drop a value if they are dropped on the right thread.
+//! [`Sticky`] and [`SemiSticky`] will however temporarily leak memory until a thread
+//! shuts down if the value is dropped on the wrong thread.  The benefit however is that
+//! if you have that type of situation, and you can live with the consequences, the
+//! type is not panicking.  A [`Fragile`] dropped in the wrong thread will not just panic,
+//! it will effectively also tear down the process because panicking in destructors is
+//! non recoverable.
 //!
 //! # Features
 //!
