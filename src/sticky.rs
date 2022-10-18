@@ -9,18 +9,21 @@ use std::num::NonZeroUsize;
 use crate::errors::InvalidThreadAccess;
 use crate::registry;
 use crate::thread_id;
+use crate::StackToken;
 
-/// A `Sticky<T>` keeps a value T stored in a thread.
+/// A [`Sticky<T>`] keeps a value T stored in a thread.
 ///
-/// This type works similar in nature to `Fragile<T>` and exposes a
-/// similar interface.  The difference is that whereas `Fragile<T>` has
+/// This type works similar in nature to [`Fragile`](crate::Fragile) and exposes a
+/// similar interface.  The difference is that whereas [`Fragile`](crate::Fragile) has
 /// its destructor called in the thread where the value was sent, a
-/// `Sticky<T>` that is moved to another thread will have the internal
+/// [`Sticky`] that is moved to another thread will have the internal
 /// destructor called when the originating thread tears down.
 ///
-/// Because `Sticky<T>` allows values to be kept alive for longer than the
-/// `Sticky<T>` itself, it requires all its contents to be `'static` for
-/// soundness.
+/// Because [`Sticky`] allows values to be kept alive for longer than the
+/// [`Sticky`] itself, it requires all its contents to be `'static` for
+/// soundness.  More importantly it also requires the use of [`StackToken`]s.
+/// For information about how to use stack tokens and why they are neded,
+/// refer to [`stack_token!`](crate::stack_token).
 ///
 /// As this uses TLS internally the general rules about the platform limitations
 /// of destructors for TLS apply.
@@ -43,9 +46,9 @@ impl<T> Drop for Sticky<T> {
 }
 
 impl<T> Sticky<T> {
-    /// Creates a new `Sticky` wrapping a `value`.
+    /// Creates a new [`Sticky`] wrapping a `value`.
     ///
-    /// The value that is moved into the `Sticky` can be non `Send` and
+    /// The value that is moved into the [`Sticky`] can be non `Send` and
     /// will be anchored to the thread that created the object.  If the
     /// sticky wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.
@@ -135,7 +138,7 @@ impl<T> Sticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
-    pub fn get(&self) -> &T {
+    pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
         self.with_value(|value| unsafe { &*value })
     }
 
@@ -145,14 +148,17 @@ impl<T> Sticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
-    pub fn get_mut(&mut self) -> &mut T {
+    pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
         self.with_value(|value| unsafe { &mut *value })
     }
 
     /// Tries to immutably borrow the wrapped value.
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
+    pub fn try_get<'stack>(
+        &'stack self,
+        _proof: &'stack StackToken,
+    ) -> Result<&'stack T, InvalidThreadAccess> {
         if self.is_valid() {
             Ok(self.with_value(|value| unsafe { &*value }))
         } else {
@@ -163,7 +169,10 @@ impl<T> Sticky<T> {
     /// Tries to mutably borrow the wrapped value.
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
+    pub fn try_get_mut<'stack>(
+        &'stack mut self,
+        _proof: &'stack StackToken,
+    ) -> Result<&'stack mut T, InvalidThreadAccess> {
         if self.is_valid() {
             Ok(self.with_value(|value| unsafe { &mut *value }))
         } else {
@@ -182,7 +191,8 @@ impl<T> From<T> for Sticky<T> {
 impl<T: Clone> Clone for Sticky<T> {
     #[inline]
     fn clone(&self) -> Sticky<T> {
-        Sticky::new(self.get().clone())
+        crate::stack_token!(tok);
+        Sticky::new(self.get(tok).clone())
     }
 }
 
@@ -196,7 +206,8 @@ impl<T: Default> Default for Sticky<T> {
 impl<T: PartialEq> PartialEq for Sticky<T> {
     #[inline]
     fn eq(&self, other: &Sticky<T>) -> bool {
-        *self.get() == *other.get()
+        crate::stack_token!(tok);
+        *self.get(tok) == *other.get(tok)
     }
 }
 
@@ -205,46 +216,54 @@ impl<T: Eq> Eq for Sticky<T> {}
 impl<T: PartialOrd> PartialOrd for Sticky<T> {
     #[inline]
     fn partial_cmp(&self, other: &Sticky<T>) -> Option<cmp::Ordering> {
-        self.get().partial_cmp(other.get())
+        crate::stack_token!(tok);
+        self.get(tok).partial_cmp(other.get(tok))
     }
 
     #[inline]
     fn lt(&self, other: &Sticky<T>) -> bool {
-        *self.get() < *other.get()
+        crate::stack_token!(tok);
+        *self.get(tok) < *other.get(tok)
     }
 
     #[inline]
     fn le(&self, other: &Sticky<T>) -> bool {
-        *self.get() <= *other.get()
+        crate::stack_token!(tok);
+        *self.get(tok) <= *other.get(tok)
     }
 
     #[inline]
     fn gt(&self, other: &Sticky<T>) -> bool {
-        *self.get() > *other.get()
+        crate::stack_token!(tok);
+        *self.get(tok) > *other.get(tok)
     }
 
     #[inline]
     fn ge(&self, other: &Sticky<T>) -> bool {
-        *self.get() >= *other.get()
+        crate::stack_token!(tok);
+        *self.get(tok) >= *other.get(tok)
     }
 }
 
 impl<T: Ord> Ord for Sticky<T> {
     #[inline]
     fn cmp(&self, other: &Sticky<T>) -> cmp::Ordering {
-        self.get().cmp(other.get())
+        crate::stack_token!(tok);
+        self.get(tok).cmp(other.get(tok))
     }
 }
 
 impl<T: fmt::Display> fmt::Display for Sticky<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        fmt::Display::fmt(self.get(), f)
+        crate::stack_token!(tok);
+        fmt::Display::fmt(self.get(tok), f)
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self.try_get() {
+        crate::stack_token!(tok);
+        match self.try_get(tok) {
             Ok(value) => f.debug_struct("Sticky").field("value", value).finish(),
             Err(..) => {
                 struct InvalidPlaceholder;
@@ -273,11 +292,13 @@ unsafe impl<T> Send for Sticky<T> {}
 fn test_basic() {
     use std::thread;
     let val = Sticky::new(true);
+    crate::stack_token!(tok);
     assert_eq!(val.to_string(), "true");
-    assert_eq!(val.get(), &true);
-    assert!(val.try_get().is_ok());
+    assert_eq!(val.get(tok), &true);
+    assert!(val.try_get(tok).is_ok());
     thread::spawn(move || {
-        assert!(val.try_get().is_err());
+        crate::stack_token!(tok);
+        assert!(val.try_get(tok).is_err());
     })
     .join()
     .unwrap();
@@ -286,9 +307,10 @@ fn test_basic() {
 #[test]
 fn test_mut() {
     let mut val = Sticky::new(true);
-    *val.get_mut() = false;
+    crate::stack_token!(tok);
+    *val.get_mut(tok) = false;
     assert_eq!(val.to_string(), "false");
-    assert_eq!(val.get(), &false);
+    assert_eq!(val.get(tok), &false);
 }
 
 #[test]
@@ -297,7 +319,8 @@ fn test_access_other_thread() {
     use std::thread;
     let val = Sticky::new(true);
     thread::spawn(move || {
-        val.get();
+        crate::stack_token!(tok);
+        val.get(tok);
     })
     .join()
     .unwrap();
@@ -340,7 +363,8 @@ fn test_noop_drop_elsewhere() {
             let val = Sticky::new(X(was_called.clone()));
             assert!(thread::spawn(move || {
                 // moves it here but do not deallocate
-                val.try_get().ok();
+                crate::stack_token!(tok);
+                val.try_get(tok).ok();
             })
             .join()
             .is_ok());
@@ -360,7 +384,8 @@ fn test_rc_sending() {
     use std::thread;
     let val = Sticky::new(Rc::new(true));
     thread::spawn(move || {
-        assert!(val.try_get().is_err());
+        crate::stack_token!(tok);
+        assert!(val.try_get(tok).is_err());
     })
     .join()
     .unwrap();

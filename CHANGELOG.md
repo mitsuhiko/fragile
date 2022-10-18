@@ -2,9 +2,11 @@
 
 All notable changes to similar are documented here.
 
-## 1.3.0
+## 2.0.0
 
 * `Fragile` no longer boxes internally.
+* `Sticky` and `SemiSticky` now require the use of stack tokens.
+  For more information see [#26](https://github.com/mitsuhiko/fragile/issues/26)
 
 ## 1.2.1
 

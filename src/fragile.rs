@@ -7,14 +7,15 @@ use crate::errors::InvalidThreadAccess;
 use crate::thread_id;
 use std::mem::ManuallyDrop;
 
-/// A `Fragile<T>` wraps a non sendable `T` to be safely send to other threads.
+/// A [`Fragile<T>`] wraps a non sendable `T` to be safely send to other threads.
 ///
 /// Once the value has been wrapped it can be sent to other threads but access
 /// to the value on those threads will fail.
 ///
 /// If the value needs destruction and the fragile wrapper is on another thread
-/// the destructor will panic.  Alternatively you can use `Sticky<T>` which is
-/// not going to panic but might temporarily leak the value.
+/// the destructor will panic.  Alternatively you can use
+/// [`Sticky`](crate::Sticky) which is not going to panic but might temporarily
+/// leak the value.
 pub struct Fragile<T> {
     // ManuallyDrop is necessary because we need to move out of this `Box` without running the
     // Drop code in functions like `into_inner`.
@@ -23,9 +24,9 @@ pub struct Fragile<T> {
 }
 
 impl<T> Fragile<T> {
-    /// Creates a new `Fragile` wrapping a `value`.
+    /// Creates a new [`Fragile`] wrapping a `value`.
     ///
-    /// The value that is moved into the `Fragile` can be non `Send` and
+    /// The value that is moved into the [`Fragile`] can be non `Send` and
     /// will be anchored to the thread that created the object.  If the
     /// fragile wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.
@@ -70,7 +71,7 @@ impl<T> Fragile<T> {
     ///
     /// The wrapped value is returned if this is called from the same thread
     /// as the one where the original value was created, otherwise the
-    /// `Fragile` is returned as `Err(self)`.
+    /// [`Fragile`] is returned as `Err(self)`.
     pub fn try_into_inner(self) -> Result<T, Self> {
         if thread_id::get() == self.thread_id {
             Ok(self.into_inner())
@@ -84,7 +85,7 @@ impl<T> Fragile<T> {
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get`](#method.try_get`).
+    /// For a non-panicking variant, use [`try_get`](Self::try_get).
     pub fn get(&self) -> &T {
         self.assert_thread();
         &**self.value
@@ -95,7 +96,7 @@ impl<T> Fragile<T> {
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
+    /// For a non-panicking variant, use [`try_get_mut`](Self::try_get_mut).
     pub fn get_mut(&mut self) -> &mut T {
         self.assert_thread();
         &mut **self.value
