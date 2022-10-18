@@ -7,7 +7,7 @@ use crate::sticky::Sticky;
 use std::mem;
 
 enum SemiStickyImpl<T: 'static> {
-    Fragile(Fragile<T>),
+    Fragile(Box<Fragile<T>>),
     Sticky(Sticky<T>),
 }
 
@@ -36,7 +36,7 @@ impl<T> SemiSticky<T> {
             inner: if mem::needs_drop::<T>() {
                 SemiStickyImpl::Sticky(Sticky::new(value))
             } else {
-                SemiStickyImpl::Fragile(Fragile::new(value))
+                SemiStickyImpl::Fragile(Box::new(Fragile::new(value)))
             },
         }
     }
@@ -72,7 +72,7 @@ impl<T> SemiSticky<T> {
     pub fn try_into_inner(self) -> Result<T, Self> {
         match self.inner {
             SemiStickyImpl::Fragile(inner) => inner.try_into_inner().map_err(|inner| SemiSticky {
-                inner: SemiStickyImpl::Fragile(inner),
+                inner: SemiStickyImpl::Fragile(Box::new(inner)),
             }),
             SemiStickyImpl::Sticky(inner) => inner.try_into_inner().map_err(|inner| SemiSticky {
                 inner: SemiStickyImpl::Sticky(inner),
