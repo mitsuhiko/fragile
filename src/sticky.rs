@@ -22,7 +22,7 @@ use crate::StackToken;
 /// Because [`Sticky`] allows values to be kept alive for longer than the
 /// [`Sticky`] itself, it requires all its contents to be `'static` for
 /// soundness.  More importantly it also requires the use of [`StackToken`]s.
-/// For information about how to use stack tokens and why they are neded,
+/// For information about how to use stack tokens and why they are needed,
 /// refer to [`stack_token!`](crate::stack_token).
 ///
 /// As this uses TLS internally the general rules about the platform limitations
@@ -293,7 +293,7 @@ impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
     }
 }
 
-// similar as for fragile ths type is sync because it only accesses TLS data
+// similar as for fragile the type is sync because it only accesses TLS data
 // which is thread local.  There is nothing that needs to be synchronized.
 unsafe impl<T> Sync for Sticky<T> {}
 
