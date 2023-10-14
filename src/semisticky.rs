@@ -31,7 +31,7 @@ impl<T> SemiSticky<T> {
     /// will be anchored to the thread that created the object.  If the
     /// sticky wrapper type ends up being send from thread to thread
     /// only the original thread can interact with the value.  In case the
-    /// value does not have `Drop` it will be stored in the [`SemiSticky`]
+    /// value does not have `Drop` it will be stored in the [`Fragile`]
     /// instead.
     pub fn new(value: T) -> Self {
         SemiSticky {
