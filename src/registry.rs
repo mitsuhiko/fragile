@@ -57,7 +57,7 @@ mod map_impl {
 
     fn next_item_id() -> NonZeroUsize {
         static COUNTER: AtomicUsize = AtomicUsize::new(1);
-        NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::SeqCst))
+        NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::Relaxed))
             .expect("more than usize::MAX items")
     }
 

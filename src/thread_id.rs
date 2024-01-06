@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn next() -> NonZeroUsize {
     static COUNTER: AtomicUsize = AtomicUsize::new(1);
-    NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::SeqCst)).expect("more than usize::MAX threads")
+    NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::Relaxed)).expect("more than usize::MAX threads")
 }
 
 pub(crate) fn get() -> NonZeroUsize {
