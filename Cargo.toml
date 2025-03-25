@@ -12,7 +12,7 @@ edition = "2018"
 rust-version = "1.56.0"
 
 [features]
-default = []
+default = ["stream"]
 future = []
 stream = ["future", "futures-core"]
 
