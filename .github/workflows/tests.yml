@@ -25,4 +25,4 @@ jobs:
         with:
           toolchain: 1.42.0
       - name: Test
-        run: make test
+        run: make test-msrv
