@@ -2,6 +2,12 @@
 
 All notable changes to similar are documented here.
 
+## 2.0.1
+
+* Fixed a soundness issue with `Sticky` if the `slab` variant was enabled.
+  This caused a use after free if the type was freed in the wrong thread.
+  [#37](https://github.com/mitsuhiko/fragile/pull/37)
+
 ## 2.0.0
 
 * `Fragile` no longer boxes internally.
