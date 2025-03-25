@@ -4,7 +4,8 @@ All notable changes to similar are documented here.
 
 ## 2.1.0
 
-* Implement `Future` for `Fragile`.  [#38](https://github.com/mitsuhiko/fragile/pull/38), [#40](https://github.com/mitsuhiko/fragile/pull/40)
+* Implement `Future` and `Stream` for `Fragile`, `Sticky` and `SemiSticky`.
+  [#38](https://github.com/mitsuhiko/fragile/pull/38), [#40](https://github.com/mitsuhiko/fragile/pull/40)
 * Better panic error reporting by adding `#[track_caller]`.
 * Fragile now internally uses the stdlib's thread IDs instead of its own counter.  [#39](https://github.com/mitsuhiko/fragile/pull/39)
 
