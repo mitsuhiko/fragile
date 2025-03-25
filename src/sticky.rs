@@ -420,7 +420,7 @@ fn test_thread_spawn() {
 
     let hello: &str = sticky_string.get(t);
 
-    println!("now it exists: {hello}");
+    assert_eq!(hello, "Hello World");
     drop(dummy_sticky);
     assert_eq!(hello, "Hello World");
 }
