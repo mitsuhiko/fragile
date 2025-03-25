@@ -1,10 +1,10 @@
 use std::cmp;
 use std::fmt;
 use std::mem;
-use std::num::NonZeroUsize;
+use std::thread;
+use std::thread::ThreadId;
 
 use crate::errors::InvalidThreadAccess;
-use crate::thread_id;
 use std::mem::ManuallyDrop;
 
 /// A [`Fragile<T>`] wraps a non sendable `T` to be safely send to other threads.
@@ -20,7 +20,8 @@ pub struct Fragile<T> {
     // ManuallyDrop is necessary because we need to move out of here without running the
     // Drop code in functions like `into_inner`.
     value: ManuallyDrop<T>,
-    thread_id: NonZeroUsize,
+    // we can use ThreadId because Rust guarnatees it to be unique for the duration of a process.
+    thread_id: ThreadId,
 }
 
 impl<T> Fragile<T> {
@@ -33,7 +34,7 @@ impl<T> Fragile<T> {
     pub fn new(value: T) -> Self {
         Fragile {
             value: ManuallyDrop::new(value),
-            thread_id: thread_id::get(),
+            thread_id: thread::current().id(),
         }
     }
 
@@ -41,7 +42,7 @@ impl<T> Fragile<T> {
     ///
     /// This will be `false` if the value was sent to another thread.
     pub fn is_valid(&self) -> bool {
-        thread_id::get() == self.thread_id
+        thread::current().id() == self.thread_id
     }
 
     #[inline(always)]
@@ -75,7 +76,7 @@ impl<T> Fragile<T> {
     /// as the one where the original value was created, otherwise the
     /// [`Fragile`] is returned as `Err(self)`.
     pub fn try_into_inner(self) -> Result<T, Self> {
-        if thread_id::get() == self.thread_id {
+        if self.is_valid() {
             Ok(self.into_inner())
         } else {
             Err(self)
@@ -110,7 +111,7 @@ impl<T> Fragile<T> {
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get(&self) -> Result<&T, InvalidThreadAccess> {
-        if thread_id::get() == self.thread_id {
+        if self.is_valid() {
             Ok(&*self.value)
         } else {
             Err(InvalidThreadAccess)
@@ -121,7 +122,7 @@ impl<T> Fragile<T> {
     ///
     /// Returns `None` if the calling thread is not the one that wrapped the value.
     pub fn try_get_mut(&mut self) -> Result<&mut T, InvalidThreadAccess> {
-        if thread_id::get() == self.thread_id {
+        if self.is_valid() {
             Ok(&mut *self.value)
         } else {
             Err(InvalidThreadAccess)
@@ -133,7 +134,7 @@ impl<T> Drop for Fragile<T> {
     #[track_caller]
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
-            if thread_id::get() == self.thread_id {
+            if self.is_valid() {
                 // SAFETY: `ManuallyDrop::drop` cannot be called after this point.
                 unsafe { ManuallyDrop::drop(&mut self.value) };
             } else {

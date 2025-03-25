@@ -6,6 +6,7 @@ All notable changes to similar are documented here.
 
 * Implement `Future` for `Fragile`.  [#38](https://github.com/mitsuhiko/fragile/pull/38)
 * Better panic error reporting by adding `#[track_caller]`.
+* Fragile now internally uses the stdlib's thread IDs instead of its own counter.  [#39](https://github.com/mitsuhiko/fragile/pull/39)
 
 ## 2.0.1
 
