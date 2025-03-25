@@ -88,7 +88,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get`](Self::try_get).
     pub fn get(&self) -> &T {
         self.assert_thread();
-        &*self.value
+        &self.value
     }
 
     /// Mutably borrows the wrapped value.
@@ -99,7 +99,7 @@ impl<T> Fragile<T> {
     /// For a non-panicking variant, use [`try_get_mut`](Self::try_get_mut).
     pub fn get_mut(&mut self) -> &mut T {
         self.assert_thread();
-        &mut *self.value
+        &mut self.value
     }
 
     /// Tries to immutably borrow the wrapped value.
