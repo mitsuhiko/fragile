@@ -9,7 +9,7 @@ repository = "https://github.com/mitsuhiko/fragile"
 homepage = "https://github.com/mitsuhiko/fragile"
 keywords = ["send", "cell", "non-send", "send-wrapper", "failure"]
 edition = "2018"
-rust-version = "1.52.0"
+rust-version = "1.56.0"
 
 [features]
 default = []
