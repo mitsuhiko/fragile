@@ -45,6 +45,7 @@ impl<T> Fragile<T> {
     }
 
     #[inline(always)]
+    #[track_caller]
     fn assert_thread(&self) {
         if !self.is_valid() {
             panic!("trying to access wrapped value in fragile container from incorrect thread.");
@@ -57,6 +58,7 @@ impl<T> Fragile<T> {
     ///
     /// Panics if called from a different thread than the one where the
     /// original value was created.
+    #[track_caller]
     pub fn into_inner(self) -> T {
         self.assert_thread();
 
@@ -86,6 +88,7 @@ impl<T> Fragile<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get`](Self::try_get).
+    #[track_caller]
     pub fn get(&self) -> &T {
         self.assert_thread();
         &self.value
@@ -97,6 +100,7 @@ impl<T> Fragile<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get_mut`](Self::try_get_mut).
+    #[track_caller]
     pub fn get_mut(&mut self) -> &mut T {
         self.assert_thread();
         &mut self.value
@@ -126,6 +130,7 @@ impl<T> Fragile<T> {
 }
 
 impl<T> Drop for Fragile<T> {
+    #[track_caller]
     fn drop(&mut self) {
         if mem::needs_drop::<T>() {
             if thread_id::get() == self.thread_id {
@@ -147,6 +152,7 @@ impl<T> From<T> for Fragile<T> {
 
 impl<T: Clone> Clone for Fragile<T> {
     #[inline]
+    #[track_caller]
     fn clone(&self) -> Fragile<T> {
         Fragile::new(self.get().clone())
     }
@@ -161,6 +167,7 @@ impl<T: Default> Default for Fragile<T> {
 
 impl<T: PartialEq> PartialEq for Fragile<T> {
     #[inline]
+    #[track_caller]
     fn eq(&self, other: &Fragile<T>) -> bool {
         *self.get() == *other.get()
     }
@@ -170,26 +177,31 @@ impl<T: Eq> Eq for Fragile<T> {}
 
 impl<T: PartialOrd> PartialOrd for Fragile<T> {
     #[inline]
+    #[track_caller]
     fn partial_cmp(&self, other: &Fragile<T>) -> Option<cmp::Ordering> {
         self.get().partial_cmp(other.get())
     }
 
     #[inline]
+    #[track_caller]
     fn lt(&self, other: &Fragile<T>) -> bool {
         *self.get() < *other.get()
     }
 
     #[inline]
+    #[track_caller]
     fn le(&self, other: &Fragile<T>) -> bool {
         *self.get() <= *other.get()
     }
 
     #[inline]
+    #[track_caller]
     fn gt(&self, other: &Fragile<T>) -> bool {
         *self.get() > *other.get()
     }
 
     #[inline]
+    #[track_caller]
     fn ge(&self, other: &Fragile<T>) -> bool {
         *self.get() >= *other.get()
     }
@@ -197,12 +209,14 @@ impl<T: PartialOrd> PartialOrd for Fragile<T> {
 
 impl<T: Ord> Ord for Fragile<T> {
     #[inline]
+    #[track_caller]
     fn cmp(&self, other: &Fragile<T>) -> cmp::Ordering {
         self.get().cmp(other.get())
     }
 }
 
 impl<T: fmt::Display> fmt::Display for Fragile<T> {
+    #[track_caller]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         fmt::Display::fmt(self.get(), f)
     }

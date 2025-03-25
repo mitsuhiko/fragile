@@ -34,6 +34,7 @@ pub struct Sticky<T: 'static> {
 }
 
 impl<T> Drop for Sticky<T> {
+    #[track_caller]
     fn drop(&mut self) {
         // if the type needs dropping we can only do so on the right thread.
         // worst case we leak the value until the thread dies when drop will be
@@ -77,6 +78,7 @@ impl<T> Sticky<T> {
     }
 
     #[inline(always)]
+    #[track_caller]
     fn with_value<F: FnOnce(*mut T) -> R, R>(&self, f: F) -> R {
         self.assert_thread();
 
@@ -92,6 +94,7 @@ impl<T> Sticky<T> {
     }
 
     #[inline(always)]
+    #[track_caller]
     fn assert_thread(&self) {
         if !self.is_valid() {
             panic!("trying to access wrapped value in sticky container from incorrect thread.");
@@ -104,6 +107,7 @@ impl<T> Sticky<T> {
     ///
     /// Panics if called from a different thread than the one where the
     /// original value was created.
+    #[track_caller]
     pub fn into_inner(mut self) -> T {
         self.assert_thread();
         unsafe {
@@ -137,6 +141,7 @@ impl<T> Sticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
+    #[track_caller]
     pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
         self.with_value(|value| unsafe { &*value })
     }
@@ -147,6 +152,7 @@ impl<T> Sticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
+    #[track_caller]
     pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
         self.with_value(|value| unsafe { &mut *value })
     }
@@ -189,6 +195,7 @@ impl<T> From<T> for Sticky<T> {
 
 impl<T: Clone> Clone for Sticky<T> {
     #[inline]
+    #[track_caller]
     fn clone(&self) -> Sticky<T> {
         crate::stack_token!(tok);
         Sticky::new(self.get(tok).clone())
@@ -204,6 +211,7 @@ impl<T: Default> Default for Sticky<T> {
 
 impl<T: PartialEq> PartialEq for Sticky<T> {
     #[inline]
+    #[track_caller]
     fn eq(&self, other: &Sticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) == *other.get(tok)
@@ -214,30 +222,35 @@ impl<T: Eq> Eq for Sticky<T> {}
 
 impl<T: PartialOrd> PartialOrd for Sticky<T> {
     #[inline]
+    #[track_caller]
     fn partial_cmp(&self, other: &Sticky<T>) -> Option<cmp::Ordering> {
         crate::stack_token!(tok);
         self.get(tok).partial_cmp(other.get(tok))
     }
 
     #[inline]
+    #[track_caller]
     fn lt(&self, other: &Sticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) < *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn le(&self, other: &Sticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) <= *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn gt(&self, other: &Sticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) > *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn ge(&self, other: &Sticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) >= *other.get(tok)
@@ -246,6 +259,7 @@ impl<T: PartialOrd> PartialOrd for Sticky<T> {
 
 impl<T: Ord> Ord for Sticky<T> {
     #[inline]
+    #[track_caller]
     fn cmp(&self, other: &Sticky<T>) -> cmp::Ordering {
         crate::stack_token!(tok);
         self.get(tok).cmp(other.get(tok))
@@ -253,6 +267,7 @@ impl<T: Ord> Ord for Sticky<T> {
 }
 
 impl<T: fmt::Display> fmt::Display for Sticky<T> {
+    #[track_caller]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         crate::stack_token!(tok);
         fmt::Display::fmt(self.get(tok), f)

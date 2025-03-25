@@ -10,5 +10,15 @@ homepage = "https://github.com/mitsuhiko/fragile"
 keywords = ["send", "cell", "non-send", "send-wrapper", "failure"]
 edition = "2018"
 
+[features]
+default = []
+future = []
+stream = ["future", "futures-core"]
+
 [dependencies]
+futures-core = { version = "0.3.31", optional = true }
 slab = { version = "0.4.5", optional = true }
+
+[dev-dependencies]
+futures-executor = "0.3.31"
+futures-util = "0.3.31"

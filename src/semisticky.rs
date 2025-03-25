@@ -59,6 +59,7 @@ impl<T> SemiSticky<T> {
     ///
     /// Panics if called from a different thread than the one where the
     /// original value was created.
+    #[track_caller]
     pub fn into_inner(self) -> T {
         match self.inner {
             SemiStickyImpl::Fragile(inner) => inner.into_inner(),
@@ -88,6 +89,7 @@ impl<T> SemiSticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get`](Self::try_get).
+    #[track_caller]
     pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
         match self.inner {
             SemiStickyImpl::Fragile(ref inner) => inner.get(),
@@ -101,6 +103,7 @@ impl<T> SemiSticky<T> {
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
     /// For a non-panicking variant, use [`try_get_mut`](Self::try_get_mut).
+    #[track_caller]
     pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
         match self.inner {
             SemiStickyImpl::Fragile(ref mut inner) => inner.get_mut(),
@@ -144,6 +147,7 @@ impl<T> From<T> for SemiSticky<T> {
 
 impl<T: Clone> Clone for SemiSticky<T> {
     #[inline]
+    #[track_caller]
     fn clone(&self) -> SemiSticky<T> {
         crate::stack_token!(tok);
         SemiSticky::new(self.get(tok).clone())
@@ -159,6 +163,7 @@ impl<T: Default> Default for SemiSticky<T> {
 
 impl<T: PartialEq> PartialEq for SemiSticky<T> {
     #[inline]
+    #[track_caller]
     fn eq(&self, other: &SemiSticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) == *other.get(tok)
@@ -169,30 +174,35 @@ impl<T: Eq> Eq for SemiSticky<T> {}
 
 impl<T: PartialOrd> PartialOrd for SemiSticky<T> {
     #[inline]
+    #[track_caller]
     fn partial_cmp(&self, other: &SemiSticky<T>) -> Option<cmp::Ordering> {
         crate::stack_token!(tok);
         self.get(tok).partial_cmp(other.get(tok))
     }
 
     #[inline]
+    #[track_caller]
     fn lt(&self, other: &SemiSticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) < *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn le(&self, other: &SemiSticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) <= *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn gt(&self, other: &SemiSticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) > *other.get(tok)
     }
 
     #[inline]
+    #[track_caller]
     fn ge(&self, other: &SemiSticky<T>) -> bool {
         crate::stack_token!(tok);
         *self.get(tok) >= *other.get(tok)
@@ -201,6 +211,7 @@ impl<T: PartialOrd> PartialOrd for SemiSticky<T> {
 
 impl<T: Ord> Ord for SemiSticky<T> {
     #[inline]
+    #[track_caller]
     fn cmp(&self, other: &SemiSticky<T>) -> cmp::Ordering {
         crate::stack_token!(tok);
         self.get(tok).cmp(other.get(tok))
@@ -208,6 +219,7 @@ impl<T: Ord> Ord for SemiSticky<T> {
 }
 
 impl<T: fmt::Display> fmt::Display for SemiSticky<T> {
+    #[track_caller]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         crate::stack_token!(tok);
         fmt::Display::fmt(self.get(tok), f)
