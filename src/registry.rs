@@ -10,7 +10,6 @@ pub struct Entry {
 #[cfg(feature = "slab")]
 mod slab_impl {
     use std::cell::UnsafeCell;
-    use std::num::NonZeroUsize;
 
     use super::Entry;
 
@@ -20,23 +19,15 @@ mod slab_impl {
 
     pub use usize as ItemId;
 
-    pub fn insert(thread_id: NonZeroUsize, entry: Entry) -> ItemId {
-        let _ = thread_id;
+    pub fn insert(entry: Entry) -> ItemId {
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) })
     }
 
-    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, thread_id: NonZeroUsize, f: F) -> R {
-        let _ = thread_id;
+    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
         REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(item_id).unwrap()))
     }
 
-    pub fn remove(item_id: ItemId, thread_id: NonZeroUsize) -> Entry {
-        let _ = thread_id;
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(item_id) })
-    }
-
-    pub fn try_remove(item_id: ItemId, thread_id: NonZeroUsize) -> Option<Entry> {
-        let _ = thread_id;
+    pub fn try_remove(item_id: ItemId) -> Option<Entry> {
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.try_remove(item_id) })
     }
 }
@@ -49,7 +40,7 @@ mod map_impl {
 
     use super::Entry;
 
-    pub struct Registry(pub std::collections::HashMap<(NonZeroUsize, NonZeroUsize), Entry>);
+    pub struct Registry(pub std::collections::HashMap<NonZeroUsize, Entry>);
 
     thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Default::default())));
 
@@ -61,29 +52,18 @@ mod map_impl {
             .expect("more than usize::MAX items")
     }
 
-    pub fn insert(thread_id: NonZeroUsize, entry: Entry) -> ItemId {
+    pub fn insert(entry: Entry) -> ItemId {
         let item_id = next_item_id();
-        REGISTRY
-            .with(|registry| unsafe { (*registry.get()).0.insert((thread_id, item_id), entry) });
+        REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(item_id, entry) });
         item_id
     }
 
-    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, thread_id: NonZeroUsize, f: F) -> R {
-        REGISTRY.with(|registry| {
-            f(unsafe { &*registry.get() }
-                .0
-                .get(&(thread_id, item_id))
-                .unwrap())
-        })
+    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
+        REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(&item_id).unwrap()))
     }
 
-    pub fn remove(item_id: ItemId, thread_id: NonZeroUsize) -> Entry {
-        REGISTRY
-            .with(|registry| unsafe { (*registry.get()).0.remove(&(thread_id, item_id)).unwrap() })
-    }
-
-    pub fn try_remove(item_id: ItemId, thread_id: NonZeroUsize) -> Option<Entry> {
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(&(thread_id, item_id)) })
+    pub fn try_remove(item_id: ItemId) -> Option<Entry> {
+        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(&item_id) })
     }
 }
 
