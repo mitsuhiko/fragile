@@ -2,6 +2,11 @@
 
 All notable changes to similar are documented here.
 
+## 2.1.0
+
+* Implement `Future` for `Fragile`.  [#38](https://github.com/mitsuhiko/fragile/pull/38)
+* Better panic error reporting by adding `#[track_caller]`.
+
 ## 2.0.1
 
 * Fixed a soundness issue with `Sticky` if the `slab` variant was enabled.
