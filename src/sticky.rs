@@ -110,11 +110,11 @@ impl<T> Sticky<T> {
     #[track_caller]
     pub fn into_inner(mut self) -> T {
         self.assert_thread();
-        unsafe {
-            let rv = self.unsafe_take_value();
+        
+            let rv = unsafe {self.unsafe_take_value()};
             mem::forget(self);
             rv
-        }
+        
     }
 
     unsafe fn unsafe_take_value(&mut self) -> T {
