@@ -19,7 +19,17 @@ enum SemiStickyImpl<T: 'static> {
 /// will be internally behave like a [`Sticky`].
 ///
 /// This type requires `T: 'static` for the same reasons as [`Sticky`] and
-/// also uses [`StackToken`]s.
+/// also uses [`StackToken`]s. Like [`Sticky`], it is [`Unpin`] only if `T` is
+/// `Unpin`.
+///
+/// ```compile_fail
+/// use fragile::SemiSticky;
+/// use std::marker::PhantomPinned;
+/// use std::pin::Pin;
+///
+/// let value = Box::pin(SemiSticky::new(PhantomPinned));
+/// let _ = Pin::into_inner(value);
+/// ```
 pub struct SemiSticky<T: 'static> {
     inner: SemiStickyImpl<T>,
 }

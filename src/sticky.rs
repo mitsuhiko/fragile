@@ -2,7 +2,7 @@
 
 use std::cmp;
 use std::fmt;
-use std::marker::PhantomData;
+use std::marker::{PhantomData, PhantomPinned};
 use std::mem;
 use std::thread;
 use std::thread::ThreadId;
@@ -27,11 +27,27 @@ use crate::StackToken;
 ///
 /// As this uses TLS internally the general rules about the platform limitations
 /// of destructors for TLS apply.
+///
+/// A `Sticky<T>` is [`Unpin`] only if `T` is `Unpin`. This ensures that once a
+/// wrapped value has been pinned through the `Future` or `Stream`
+/// implementation, it cannot later be moved out of the wrapper.
+///
+/// ```compile_fail
+/// use fragile::Sticky;
+/// use std::marker::PhantomPinned;
+/// use std::pin::Pin;
+///
+/// let value = Box::pin(Sticky::new(PhantomPinned));
+/// let _ = Pin::into_inner(value);
+/// ```
 pub struct Sticky<T: 'static> {
     item_id: registry::ItemId,
     thread_id: ThreadId,
     _marker: PhantomData<*mut T>,
+    _pin: PhantomPinned,
 }
+
+impl<T: Unpin> Unpin for Sticky<T> {}
 
 impl<T> Drop for Sticky<T> {
     #[track_caller]
@@ -42,7 +58,7 @@ impl<T> Drop for Sticky<T> {
         if mem::needs_drop::<T>() {
             unsafe {
                 if self.is_valid() {
-                    self.unsafe_take_value();
+                    self.unsafe_drop_value();
                 }
             }
         }
@@ -74,6 +90,7 @@ impl<T> Sticky<T> {
             item_id,
             thread_id,
             _marker: PhantomData,
+            _pin: PhantomPinned,
         }
     }
 
@@ -115,6 +132,11 @@ impl<T> Sticky<T> {
             mem::forget(self);
             rv
         }
+    }
+
+    unsafe fn unsafe_drop_value(&mut self) {
+        let entry = registry::try_remove(self.item_id).unwrap();
+        (entry.drop)(entry.ptr);
     }
 
     unsafe fn unsafe_take_value(&mut self) -> T {

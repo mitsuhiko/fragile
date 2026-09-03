@@ -19,7 +19,13 @@ impl<F: Future> Future for Sticky<F> {
     #[track_caller]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         stack_token!(tok);
-        unsafe { Pin::new_unchecked(Sticky::get_mut(&mut self, tok)) }.poll(cx)
+        // SAFETY: We do not move the wrapper through this mutable reference.
+        let this = unsafe { self.as_mut().get_unchecked_mut() };
+        let inner = Sticky::get_mut(this, tok);
+        // SAFETY: `Sticky<F>` is `Unpin` only when `F` is `Unpin`, and the
+        // out-of-line value is dropped in place. Pinning the wrapper therefore
+        // pins the value returned by `get_mut` for the rest of its lifetime.
+        unsafe { Pin::new_unchecked(inner) }.poll(cx)
     }
 }
 
@@ -29,7 +35,12 @@ impl<F: Future> Future for SemiSticky<F> {
     #[track_caller]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         stack_token!(tok);
-        unsafe { Pin::new_unchecked(SemiSticky::get_mut(&mut self, tok)) }.poll(cx)
+        // SAFETY: We do not move the wrapper through this mutable reference.
+        let this = unsafe { self.as_mut().get_unchecked_mut() };
+        let inner = SemiSticky::get_mut(this, tok);
+        // SAFETY: `SemiSticky<F>` is `Unpin` only when `F` is `Unpin`, and its
+        // storage does not move the value while the wrapper is pinned.
+        unsafe { Pin::new_unchecked(inner) }.poll(cx)
     }
 }
 
@@ -61,7 +72,10 @@ mod stream {
         #[track_caller]
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             stack_token!(tok);
-            unsafe { Pin::new_unchecked(Sticky::get_mut(&mut self, tok)) }.poll_next(cx)
+            // SAFETY: See the corresponding `Future` implementation.
+            let this = unsafe { self.as_mut().get_unchecked_mut() };
+            let inner = Sticky::get_mut(this, tok);
+            unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
         }
 
         #[inline]
@@ -80,7 +94,10 @@ mod stream {
         #[track_caller]
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
             stack_token!(tok);
-            unsafe { Pin::new_unchecked(SemiSticky::get_mut(&mut self, tok)) }.poll_next(cx)
+            // SAFETY: See the corresponding `Future` implementation.
+            let this = unsafe { self.as_mut().get_unchecked_mut() };
+            let inner = SemiSticky::get_mut(this, tok);
+            unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
         }
 
         #[inline]
@@ -136,6 +153,60 @@ mod stream {
         let t = std::thread::spawn(move || executor::block_on(w.next()));
         assert!(t.join().is_err());
     }
+}
+
+#[cfg(test)]
+struct PendingUntilDrop {
+    address: std::cell::Cell<*const PendingUntilDrop>,
+    _pin: std::marker::PhantomPinned,
+}
+
+#[cfg(test)]
+impl PendingUntilDrop {
+    fn new() -> Self {
+        PendingUntilDrop {
+            address: std::cell::Cell::new(std::ptr::null()),
+            _pin: std::marker::PhantomPinned,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Future for PendingUntilDrop {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let current = &*self as *const PendingUntilDrop;
+        if self.address.get().is_null() {
+            self.address.set(current);
+        } else {
+            assert_eq!(self.address.get(), current);
+        }
+        Poll::Pending
+    }
+}
+
+#[cfg(test)]
+impl Drop for PendingUntilDrop {
+    fn drop(&mut self) {
+        if !self.address.get().is_null() {
+            assert_eq!(self.address.get(), self as *const PendingUntilDrop);
+        }
+    }
+}
+
+#[test]
+fn test_pinned_future_dropped_in_place() {
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    let mut sticky = Box::pin(Sticky::new(PendingUntilDrop::new()));
+    assert!(Future::poll(sticky.as_mut(), &mut context).is_pending());
+    drop(sticky);
+
+    let mut semi_sticky = Box::pin(SemiSticky::new(PendingUntilDrop::new()));
+    assert!(Future::poll(semi_sticky.as_mut(), &mut context).is_pending());
+    drop(semi_sticky);
 }
 
 #[test]
