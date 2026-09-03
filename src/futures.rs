@@ -9,7 +9,7 @@ impl<F: Future> Future for Fragile<F> {
 
     #[track_caller]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        unsafe { self.map_unchecked_mut(|s| s.get_mut()) }.poll(cx)
+        self.get_pin_mut().poll(cx)
     }
 }
 
@@ -54,7 +54,7 @@ mod stream {
 
         #[track_caller]
         fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            unsafe { self.map_unchecked_mut(|s| s.get_mut()) }.poll_next(cx)
+            self.get_pin_mut().poll_next(cx)
         }
 
         #[inline]
@@ -158,6 +158,7 @@ mod stream {
 #[cfg(test)]
 struct PendingUntilDrop {
     address: std::cell::Cell<*const PendingUntilDrop>,
+    registration: Option<std::sync::Arc<std::sync::atomic::AtomicPtr<PendingUntilDrop>>>,
     _pin: std::marker::PhantomPinned,
 }
 
@@ -166,6 +167,17 @@ impl PendingUntilDrop {
     fn new() -> Self {
         PendingUntilDrop {
             address: std::cell::Cell::new(std::ptr::null()),
+            registration: None,
+            _pin: std::marker::PhantomPinned,
+        }
+    }
+
+    fn with_registration(
+        registration: std::sync::Arc<std::sync::atomic::AtomicPtr<PendingUntilDrop>>,
+    ) -> Self {
+        PendingUntilDrop {
+            address: std::cell::Cell::new(std::ptr::null()),
+            registration: Some(registration),
             _pin: std::marker::PhantomPinned,
         }
     }
@@ -182,7 +194,22 @@ impl Future for PendingUntilDrop {
         } else {
             assert_eq!(self.address.get(), current);
         }
+        if let Some(registration) = &self.registration {
+            registration.store(
+                current as *mut PendingUntilDrop,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+        }
         Poll::Pending
+    }
+}
+
+#[cfg(all(test, feature = "stream"))]
+impl futures_core::Stream for PendingUntilDrop {
+    type Item = ();
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Future::poll(self, cx).map(Some)
     }
 }
 
@@ -192,6 +219,9 @@ impl Drop for PendingUntilDrop {
         if !self.address.get().is_null() {
             assert_eq!(self.address.get(), self as *const PendingUntilDrop);
         }
+        if let Some(registration) = &self.registration {
+            registration.store(std::ptr::null_mut(), std::sync::atomic::Ordering::SeqCst);
+        }
     }
 }
 
@@ -200,6 +230,10 @@ fn test_pinned_future_dropped_in_place() {
     let waker = futures_util::task::noop_waker();
     let mut context = Context::from_waker(&waker);
 
+    let mut fragile = Box::pin(Fragile::new(PendingUntilDrop::new()));
+    assert!(Future::poll(fragile.as_mut(), &mut context).is_pending());
+    drop(fragile);
+
     let mut sticky = Box::pin(Sticky::new(PendingUntilDrop::new()));
     assert!(Future::poll(sticky.as_mut(), &mut context).is_pending());
     drop(sticky);
@@ -207,6 +241,50 @@ fn test_pinned_future_dropped_in_place() {
     let mut semi_sticky = Box::pin(SemiSticky::new(PendingUntilDrop::new()));
     assert!(Future::poll(semi_sticky.as_mut(), &mut context).is_pending());
     drop(semi_sticky);
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn test_pinned_stream_dropped_in_place() {
+    use futures_core::Stream;
+
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+
+    let mut fragile = Box::pin(Fragile::new(PendingUntilDrop::new()));
+    assert!(Stream::poll_next(fragile.as_mut(), &mut context).is_pending());
+    drop(fragile);
+
+    let mut sticky = Box::pin(Sticky::new(PendingUntilDrop::new()));
+    assert!(Stream::poll_next(sticky.as_mut(), &mut context).is_pending());
+    drop(sticky);
+
+    let mut semi_sticky = Box::pin(SemiSticky::new(PendingUntilDrop::new()));
+    assert!(Stream::poll_next(semi_sticky.as_mut(), &mut context).is_pending());
+    drop(semi_sticky);
+}
+
+#[test]
+fn test_pinned_fragile_drop_on_wrong_thread_keeps_storage_alive() {
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::Arc;
+
+    let registration = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+    let future = PendingUntilDrop::with_registration(registration.clone());
+    let mut fragile = Box::pin(Fragile::new(future));
+
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+    assert!(Future::poll(fragile.as_mut(), &mut context).is_pending());
+
+    assert!(std::thread::spawn(move || drop(fragile)).join().is_err());
+
+    let registered = registration.load(Ordering::SeqCst);
+    assert!(!registered.is_null());
+    // SAFETY: Polling registered this pointer only after the future was pinned,
+    // and its destructor clears the registration before invalidating storage.
+    // A wrong-thread `Fragile` drop must therefore keep that storage alive.
+    assert_eq!(unsafe { (*registered).address.get() }, registered);
 }
 
 #[test]

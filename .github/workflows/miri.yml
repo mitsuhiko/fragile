@@ -1,0 +1,25 @@
+name: Miri
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Prepare Miri
+        run: cargo miri setup
+      - name: Test default features
+        run: cargo miri test
+        env:
+          MIRIFLAGS: -Zmiri-ignore-leaks
+      - name: Test all features
+        run: cargo miri test --all-features
+        env:
+          MIRIFLAGS: -Zmiri-ignore-leaks

@@ -23,12 +23,19 @@ mod slab_impl {
         REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) })
     }
 
+    pub fn is_available() -> bool {
+        REGISTRY.try_with(|_| ()).is_ok()
+    }
+
     pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
         REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(item_id).unwrap()))
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.try_remove(item_id) })
+        REGISTRY
+            .try_with(|registry| unsafe { (*registry.get()).0.try_remove(item_id) })
+            .ok()
+            .flatten()
     }
 }
 
@@ -48,8 +55,15 @@ mod map_impl {
 
     fn next_item_id() -> NonZeroUsize {
         static COUNTER: AtomicUsize = AtomicUsize::new(1);
-        NonZeroUsize::new(COUNTER.fetch_add(1, Ordering::Relaxed))
-            .expect("more than usize::MAX items")
+        let mut item_id = COUNTER.load(Ordering::Relaxed);
+        loop {
+            let next = item_id.checked_add(1).expect("more than usize::MAX items");
+            match COUNTER.compare_exchange_weak(item_id, next, Ordering::Relaxed, Ordering::Relaxed)
+            {
+                Ok(_) => return NonZeroUsize::new(item_id).unwrap(),
+                Err(actual) => item_id = actual,
+            }
+        }
     }
 
     pub fn insert(entry: Entry) -> ItemId {
@@ -58,12 +72,19 @@ mod map_impl {
         item_id
     }
 
+    pub fn is_available() -> bool {
+        REGISTRY.try_with(|_| ()).is_ok()
+    }
+
     pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
         REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(&item_id).unwrap()))
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.remove(&item_id) })
+        REGISTRY
+            .try_with(|registry| unsafe { (*registry.get()).0.remove(&item_id) })
+            .ok()
+            .flatten()
     }
 }
 

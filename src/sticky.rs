@@ -57,7 +57,7 @@ impl<T> Drop for Sticky<T> {
         // called by the registry.
         if mem::needs_drop::<T>() {
             unsafe {
-                if self.is_valid() {
+                if registry::is_available() && self.is_valid() {
                     self.unsafe_drop_value();
                 }
             }
@@ -135,8 +135,11 @@ impl<T> Sticky<T> {
     }
 
     unsafe fn unsafe_drop_value(&mut self) {
-        let entry = registry::try_remove(self.item_id).unwrap();
-        (entry.drop)(entry.ptr);
+        // The registry is unavailable while its TLS destructor is running. In
+        // that case it still owns the entry and will drop the value itself.
+        if let Some(entry) = registry::try_remove(self.item_id) {
+            (entry.drop)(entry.ptr);
+        }
     }
 
     unsafe fn unsafe_take_value(&mut self) -> T {
@@ -460,4 +463,31 @@ fn test_thread_spawn() {
     assert_eq!(hello, "Hello World");
     drop(dummy_sticky);
     assert_eq!(hello, "Hello World");
+}
+
+#[test]
+fn test_nested_sticky_drop_at_thread_exit() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    let drop_count = Arc::new(AtomicUsize::new(0));
+    let thread_drop_count = drop_count.clone();
+
+    thread::spawn(move || {
+        struct X(Arc<AtomicUsize>);
+
+        impl Drop for X {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let outer = Sticky::new(Sticky::new(X(thread_drop_count)));
+        thread::spawn(move || drop(outer)).join().unwrap();
+    })
+    .join()
+    .unwrap();
+
+    assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 }
