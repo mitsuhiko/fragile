@@ -1,3 +1,5 @@
+#![deny(unsafe_op_in_unsafe_fn)]
+
 //! This library provides wrapper types that permit sending non `Send` types to
 //! other threads and use runtime checks to ensure safety.
 //!
@@ -20,8 +22,9 @@
 //! in the originating thread it gets cleaned up immediately, otherwise it leaks
 //! until the thread shuts down naturally.  [`Sticky`] because it borrows into the
 //! TLS also requires you to "prove" that you are not doing any funny business with
-//! the borrowed value that lives for longer than the current stack frame which
-//! results in a slightly more complex API.
+//! borrowed values that live longer than a local token's scope, which results in a
+//! slightly more complex API. Tokens suspended in async state machines keep the TLS
+//! registry's values alive if they outlive the originating thread.
 //!
 //! There is a third typed called [`SemiSticky`] which shares the API with [`Sticky`]
 //! but internally uses a boxed [`Fragile`] if the type does not actually need a dtor
@@ -85,9 +88,10 @@
 //!
 //! All types will try to eagerly drop a value if they are dropped on the right thread.
 //! [`Sticky`] and [`SemiSticky`] will however temporarily leak memory until a thread
-//! shuts down if the value is dropped on the wrong thread.  The benefit however is that
-//! if you have that type of situation, and you can live with the consequences, the
-//! type is not panicking.  A [`Fragile`] dropped in the wrong thread will not just panic,
+//! shuts down if the value is dropped on the wrong thread. If a live [`StackToken`]
+//! outlives that thread, the registry is leaked permanently to keep outstanding
+//! references valid. The benefit is that these types do not panic. A [`Fragile`]
+//! dropped in the wrong thread will not just panic,
 //! it will effectively also tear down the process because panicking in destructors is
 //! non recoverable.
 //!
@@ -117,29 +121,36 @@ pub use crate::fragile::Fragile;
 pub use crate::semisticky::SemiSticky;
 pub use crate::sticky::Sticky;
 
-/// A token that is placed to the stack to constrain lifetimes.
+/// A token that is placed in a local scope to constrain lifetimes.
 ///
 /// For more information about how these work see the documentation of
-/// [`stack_token!`] which is the only way to create this token.
-pub struct StackToken(PhantomData<*const ()>);
+/// [`stack_token!`], which is the intended way to create this token.
+pub struct StackToken {
+    // Keep the originating thread's registry values alive if this token is
+    // suspended in an async state machine that outlives the thread.
+    _registry_guard: std::sync::Arc<()>,
+    // Raw pointers make the token neither Send nor Sync.
+    _marker: PhantomData<*const ()>,
+}
 
 impl StackToken {
-    /// Stack tokens must only be created on the stack.
     #[doc(hidden)]
-    pub unsafe fn __private_new() -> StackToken {
-        // we place a const pointer in there to get a type
-        // that is neither Send nor Sync.
-        StackToken(PhantomData)
+    pub fn __private_new() -> StackToken {
+        StackToken {
+            _registry_guard: crate::registry::acquire_token(),
+            _marker: PhantomData,
+        }
     }
 }
 
-/// Crates a token on the stack with a certain name for semi-sticky.
+/// Creates a scoped token with a certain name for semi-sticky.
 ///
 /// The argument to the macro is the target name of a local variable
-/// which holds a reference to a stack token.  Because this is the
-/// only way to create such a token, it acts as a proof to [`Sticky`]
-/// or [`SemiSticky`] that can be used to constrain the lifetime of the
-/// return values to the stack frame.
+/// which holds a reference to a stack token. Because this is the
+/// intended way to create such a token, it acts as a proof to [`Sticky`]
+/// or [`SemiSticky`] that can be used to constrain the lifetime of returned
+/// values to the token's local scope. If that scope is suspended in an async
+/// state machine, the token keeps borrowed registry values alive.
 ///
 /// This is necessary as otherwise a [`Sticky`] placed in a [`Box`] and
 /// leaked with [`Box::leak`] (which creates a static lifetime) would
@@ -150,7 +161,7 @@ impl StackToken {
 /// ```rust
 /// let sticky = fragile::Sticky::new(true);
 ///
-/// // this places a token on the stack.
+/// // this places a token in the local scope.
 /// fragile::stack_token!(my_token);
 ///
 /// // the token needs to be passed to `get` and others.
@@ -159,6 +170,6 @@ impl StackToken {
 #[macro_export]
 macro_rules! stack_token {
     ($name:ident) => {
-        let $name = &unsafe { $crate::StackToken::__private_new() };
+        let $name = &$crate::StackToken::__private_new();
     };
 }

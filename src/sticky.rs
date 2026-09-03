@@ -17,7 +17,9 @@ use crate::StackToken;
 /// similar interface.  The difference is that whereas [`Fragile`](crate::Fragile) has
 /// its destructor called in the thread where the value was sent, a
 /// [`Sticky`] that is moved to another thread will have the internal
-/// destructor called when the originating thread tears down.
+/// destructor called when the originating thread tears down. If a live
+/// [`StackToken`] outlives that thread, registry values are instead leaked to
+/// keep outstanding references valid.
 ///
 /// Because [`Sticky`] allows values to be kept alive for longer than the
 /// [`Sticky`] itself, it requires all its contents to be `'static` for
@@ -52,15 +54,13 @@ impl<T: Unpin> Unpin for Sticky<T> {}
 impl<T> Drop for Sticky<T> {
     #[track_caller]
     fn drop(&mut self) {
-        // if the type needs dropping we can only do so on the right thread.
-        // worst case we leak the value until the thread dies when drop will be
+        // If the type needs dropping we can only do so on the right thread.
+        // Worst case we leak the value until the thread dies, when drop will be
         // called by the registry.
-        if mem::needs_drop::<T>() {
-            unsafe {
-                if registry::is_available() && self.is_valid() {
-                    self.unsafe_drop_value();
-                }
-            }
+        if mem::needs_drop::<T>() && registry::is_available() && self.is_valid() {
+            // SAFETY: This is the originating thread and the wrapper is being
+            // consumed, so no safe references to the entry can remain.
+            unsafe { self.unsafe_drop_value() };
         }
     }
 }
@@ -99,7 +99,7 @@ impl<T> Sticky<T> {
     fn with_value<F: FnOnce(*mut T) -> R, R>(&self, f: F) -> R {
         self.assert_thread();
 
-        registry::with(self.item_id, |entry| f(entry.ptr.cast::<T>()))
+        f(registry::get(self.item_id).cast::<T>())
     }
 
     /// Returns `true` if the access is valid.
@@ -127,6 +127,8 @@ impl<T> Sticky<T> {
     #[track_caller]
     pub fn into_inner(mut self) -> T {
         self.assert_thread();
+        // SAFETY: Ownership and the successful thread check ensure there are
+        // no outstanding safe references when the registry entry is removed.
         unsafe {
             let rv = self.unsafe_take_value();
             mem::forget(self);
@@ -138,13 +140,17 @@ impl<T> Sticky<T> {
         // The registry is unavailable while its TLS destructor is running. In
         // that case it still owns the entry and will drop the value itself.
         if let Some(entry) = registry::try_remove(self.item_id) {
-            (entry.drop)(entry.ptr);
+            // SAFETY: The callback is paired with this entry's pointer and the
+            // removal ensures it can only be called once.
+            unsafe { (entry.drop)(entry.ptr) };
         }
     }
 
     unsafe fn unsafe_take_value(&mut self) -> T {
         let ptr = registry::try_remove(self.item_id).unwrap().ptr.cast::<T>();
-        *Box::from_raw(ptr)
+        // SAFETY: This is the pointer created for `T` in `new`, and removing
+        // the entry transfers its allocation to this call exactly once.
+        unsafe { *Box::from_raw(ptr) }
     }
 
     /// Consumes the `Sticky`, returning the wrapped value if successful.
@@ -168,7 +174,11 @@ impl<T> Sticky<T> {
     /// For a non-panicking variant, use [`try_get`](#method.try_get`).
     #[track_caller]
     pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
-        self.with_value(|value| unsafe { &*value })
+        self.with_value(|value| {
+            // SAFETY: The entry owns a live `T`, and the returned reference is
+            // bounded by shared borrows of both the wrapper and stack token.
+            unsafe { &*value }
+        })
     }
 
     /// Mutably borrows the wrapped value.
@@ -179,7 +189,11 @@ impl<T> Sticky<T> {
     /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
     #[track_caller]
     pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
-        self.with_value(|value| unsafe { &mut *value })
+        self.with_value(|value| {
+            // SAFETY: The entry owns a live `T`, and the exclusive wrapper
+            // borrow prevents any other safe access for the returned lifetime.
+            unsafe { &mut *value }
+        })
     }
 
     /// Tries to immutably borrow the wrapped value.
@@ -190,7 +204,11 @@ impl<T> Sticky<T> {
         _proof: &'stack StackToken,
     ) -> Result<&'stack T, InvalidThreadAccess> {
         if self.is_valid() {
-            Ok(self.with_value(|value| unsafe { &*value }))
+            Ok(self.with_value(|value| {
+                // SAFETY: The entry owns a live `T`, and the returned reference
+                // is bounded by shared borrows of the wrapper and stack token.
+                unsafe { &*value }
+            }))
         } else {
             Err(InvalidThreadAccess)
         }
@@ -204,7 +222,11 @@ impl<T> Sticky<T> {
         _proof: &'stack StackToken,
     ) -> Result<&'stack mut T, InvalidThreadAccess> {
         if self.is_valid() {
-            Ok(self.with_value(|value| unsafe { &mut *value }))
+            Ok(self.with_value(|value| {
+                // SAFETY: The entry owns a live `T`, and the exclusive wrapper
+                // borrow prevents other safe access for the returned lifetime.
+                unsafe { &mut *value }
+            }))
         } else {
             Err(InvalidThreadAccess)
         }
@@ -320,11 +342,12 @@ impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
     }
 }
 
-// similar as for fragile the type is sync because it only accesses TLS data
-// which is thread local.  There is nothing that needs to be synchronized.
+// SAFETY: The inner value remains in its originating thread's registry and can
+// only be accessed there. Other threads inspect only the stored thread ID.
 unsafe impl<T> Sync for Sticky<T> {}
 
-// The entire point of this type is to be Send
+// SAFETY: Moving the wrapper moves only registry metadata. The inner value is
+// accessed and destroyed exclusively on its originating thread.
 unsafe impl<T> Send for Sticky<T> {}
 
 #[test]
@@ -463,6 +486,80 @@ fn test_thread_spawn() {
     assert_eq!(hello, "Hello World");
     drop(dummy_sticky);
     assert_eq!(hello, "Hello World");
+}
+
+#[test]
+fn test_async_stack_token_keeps_registry_alive() {
+    use std::future::Future;
+    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+    use std::sync::{mpsc, Arc};
+    use std::task::{Context, Poll};
+    use std::thread;
+
+    struct ReadOnDrop<'a> {
+        value: &'a String,
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for ReadOnDrop<'_> {
+        fn drop(&mut self) {
+            assert_eq!(self.value, "still alive");
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let dropped = Arc::new(AtomicBool::new(false));
+    let registered = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+    let (wrapped_tx, wrapped_rx) = mpsc::channel();
+    let (exit_tx, exit_rx) = mpsc::channel();
+
+    let origin = thread::spawn({
+        let dropped = dropped.clone();
+        let registered = registered.clone();
+        move || {
+            let sticky = Box::leak(Box::new(Sticky::new(String::from("still alive"))));
+            let future = Box::pin(async move {
+                crate::stack_token!(token);
+                let guard = ReadOnDrop {
+                    value: sticky.get(token),
+                    dropped,
+                };
+                registered.store(
+                    guard.value as *const String as *mut String,
+                    Ordering::SeqCst,
+                );
+                std::future::pending::<()>().await;
+                drop(guard);
+            });
+            let mut wrapped = Sticky::new(future);
+
+            {
+                crate::stack_token!(access_token);
+                let waker = futures_util::task::noop_waker();
+                let mut context = Context::from_waker(&waker);
+                assert!(matches!(
+                    Future::poll(wrapped.get_mut(access_token).as_mut(), &mut context),
+                    Poll::Pending
+                ));
+            }
+
+            wrapped_tx.send(wrapped).unwrap();
+            exit_rx.recv().unwrap();
+        }
+    });
+
+    let wrapped = wrapped_rx.recv().unwrap();
+    drop(wrapped);
+    exit_tx.send(()).unwrap();
+    origin.join().unwrap();
+
+    // The suspended future and borrowed registry value are intentionally kept
+    // alive because their destruction order cannot otherwise be guaranteed.
+    assert!(!dropped.load(Ordering::SeqCst));
+    let registered = registered.load(Ordering::SeqCst);
+    assert!(!registered.is_null());
+    // SAFETY: The suspended stack token must keep this registry allocation alive.
+    assert_eq!(unsafe { &*registered }, "still alive");
 }
 
 #[test]

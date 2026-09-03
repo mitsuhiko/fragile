@@ -9,31 +9,42 @@ pub struct Entry {
 
 #[cfg(feature = "slab")]
 mod slab_impl {
-    use std::cell::UnsafeCell;
+    use std::cell::RefCell;
+    use std::sync::Arc;
 
     use super::Entry;
 
-    pub struct Registry(pub slab::Slab<Entry>);
+    pub struct Registry {
+        pub entries: slab::Slab<Entry>,
+        pub token_guard: Arc<()>,
+    }
 
-    thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(slab::Slab::new())));
+    thread_local!(static REGISTRY: RefCell<Registry> = RefCell::new(Registry {
+        entries: slab::Slab::new(),
+        token_guard: Arc::new(()),
+    }));
 
     pub use usize as ItemId;
 
     pub fn insert(entry: Entry) -> ItemId {
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(entry) })
+        REGISTRY.with(|registry| registry.borrow_mut().entries.insert(entry))
+    }
+
+    pub fn acquire_token() -> Arc<()> {
+        REGISTRY.with(|registry| registry.borrow().token_guard.clone())
     }
 
     pub fn is_available() -> bool {
         REGISTRY.try_with(|_| ()).is_ok()
     }
 
-    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
-        REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(item_id).unwrap()))
+    pub fn get(item_id: ItemId) -> *mut () {
+        REGISTRY.with(|registry| registry.borrow().entries.get(item_id).unwrap().ptr)
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
         REGISTRY
-            .try_with(|registry| unsafe { (*registry.get()).0.try_remove(item_id) })
+            .try_with(|registry| registry.borrow_mut().entries.try_remove(item_id))
             .ok()
             .flatten()
     }
@@ -41,15 +52,22 @@ mod slab_impl {
 
 #[cfg(not(feature = "slab"))]
 mod map_impl {
-    use std::cell::UnsafeCell;
+    use std::cell::RefCell;
     use std::num::NonZeroUsize;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use super::Entry;
 
-    pub struct Registry(pub std::collections::HashMap<NonZeroUsize, Entry>);
+    pub struct Registry {
+        pub entries: std::collections::HashMap<NonZeroUsize, Entry>,
+        pub token_guard: Arc<()>,
+    }
 
-    thread_local!(static REGISTRY: UnsafeCell<Registry> = UnsafeCell::new(Registry(Default::default())));
+    thread_local!(static REGISTRY: RefCell<Registry> = RefCell::new(Registry {
+        entries: Default::default(),
+        token_guard: Arc::new(()),
+    }));
 
     pub type ItemId = NonZeroUsize;
 
@@ -68,21 +86,25 @@ mod map_impl {
 
     pub fn insert(entry: Entry) -> ItemId {
         let item_id = next_item_id();
-        REGISTRY.with(|registry| unsafe { (*registry.get()).0.insert(item_id, entry) });
+        REGISTRY.with(|registry| registry.borrow_mut().entries.insert(item_id, entry));
         item_id
+    }
+
+    pub fn acquire_token() -> Arc<()> {
+        REGISTRY.with(|registry| registry.borrow().token_guard.clone())
     }
 
     pub fn is_available() -> bool {
         REGISTRY.try_with(|_| ()).is_ok()
     }
 
-    pub fn with<R, F: FnOnce(&Entry) -> R>(item_id: ItemId, f: F) -> R {
-        REGISTRY.with(|registry| f(unsafe { &*registry.get() }.0.get(&item_id).unwrap()))
+    pub fn get(item_id: ItemId) -> *mut () {
+        REGISTRY.with(|registry| registry.borrow().entries.get(&item_id).unwrap().ptr)
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
         REGISTRY
-            .try_with(|registry| unsafe { (*registry.get()).0.remove(&item_id) })
+            .try_with(|registry| registry.borrow_mut().entries.remove(&item_id))
             .ok()
             .flatten()
     }
@@ -96,10 +118,20 @@ pub use self::map_impl::*;
 
 impl Drop for Registry {
     fn drop(&mut self) {
-        for (_, value) in self.0.iter() {
-            // SAFETY: This function is only called once, and is called with the
-            // pointer it was created with.
-            unsafe { (value.drop)(value.ptr) };
+        // A live stack token can carry a borrow of any registry value. This can
+        // happen when a token is suspended in an async state machine that
+        // outlives its originating thread. Leak the entries in that case so
+        // those references remain valid.
+        if std::sync::Arc::strong_count(&self.token_guard) == 1 {
+            // Detach all entries before running user destructors so reentrant code
+            // cannot alias the collection being iterated.
+            let entries = std::mem::take(&mut self.entries);
+            for (_, value) in entries.iter() {
+                // SAFETY: This function is only called once, and is called with the
+                // pointer it was created with. If a callback panics, the remaining
+                // raw entries are leaked rather than deallocated without being dropped.
+                unsafe { (value.drop)(value.ptr) };
+            }
         }
     }
 }

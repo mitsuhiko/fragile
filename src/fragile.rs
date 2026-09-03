@@ -206,7 +206,8 @@ impl<T> Fragile<T> {
 impl<T> Drop for Fragile<T> {
     #[track_caller]
     fn drop(&mut self) {
-        if self.is_valid() || !mem::needs_drop::<T>() {
+        // Check this first because obtaining a thread ID can fail during TLS teardown.
+        if !mem::needs_drop::<T>() || self.is_valid() {
             // SAFETY: `ManuallyDrop::drop` cannot be called after this point.
             unsafe { ManuallyDrop::drop(&mut self.value) };
         } else {
@@ -317,12 +318,12 @@ impl<T: fmt::Debug> fmt::Debug for Fragile<T> {
     }
 }
 
-// this type is sync because access can only ever happy from the same thread
-// that created it originally.  All other threads will be able to safely
-// call some basic operations on the reference and they will fail.
+// SAFETY: The inner value can only be accessed on its originating thread.
+// Shared operations on every other thread inspect only the thread ID and fail.
 unsafe impl<T> Sync for Fragile<T> {}
 
-// The entire point of this type is to be Send
+// SAFETY: Moving the wrapper never accesses the inner value. Wrong-thread
+// destruction does not run `T`'s destructor and preserves pinned storage.
 #[allow(clippy::non_send_fields_in_send_ty)]
 unsafe impl<T> Send for Fragile<T> {}
 

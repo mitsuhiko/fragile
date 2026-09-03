@@ -75,6 +75,7 @@ mod stream {
             // SAFETY: See the corresponding `Future` implementation.
             let this = unsafe { self.as_mut().get_unchecked_mut() };
             let inner = Sticky::get_mut(this, tok);
+            // SAFETY: See the corresponding `Future` implementation.
             unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
         }
 
@@ -97,6 +98,7 @@ mod stream {
             // SAFETY: See the corresponding `Future` implementation.
             let this = unsafe { self.as_mut().get_unchecked_mut() };
             let inner = SemiSticky::get_mut(this, tok);
+            // SAFETY: See the corresponding `Future` implementation.
             unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
         }
 
