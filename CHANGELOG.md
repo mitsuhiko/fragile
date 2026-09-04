@@ -15,6 +15,8 @@ All notable changes to fragile are documented here.
   `T: Unpin`.
 * Hardened thread-local registry cleanup for nested `Sticky` values and
   reentrant destructors.
+* Fixed a memory leak where a `Sticky` wrapping a type without drop glue never
+  released its allocation when dropped on the originating thread.
 * `Sticky` and `SemiSticky`'s `is_valid`, `try_with`, `try_with_mut`,
   `try_into_inner` and `Debug` now report an invalid access instead of
   panicking when used on the originating thread while its thread-local storage

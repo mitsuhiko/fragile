@@ -38,10 +38,10 @@ impl<T: Unpin> Unpin for Sticky<T> {}
 impl<T> Drop for Sticky<T> {
     #[track_caller]
     fn drop(&mut self) {
-        // If the type needs dropping we can only do so on the originating
+        // The value and its allocation can only be released on the originating
         // thread while its registry is alive. Otherwise the registry retains
-        // the value until the thread dies, when its destructor will be called.
-        if mem::needs_drop::<T>() && self.is_valid() {
+        // the entry until the thread dies, when it releases it itself.
+        if self.is_valid() {
             // SAFETY: This is the originating thread and the wrapper is being
             // consumed, so no safe references to the entry can remain.
             unsafe { self.unsafe_drop_value() };
@@ -556,6 +556,22 @@ fn test_thread_spawn() {
         drop(dummy_sticky);
         assert_eq!(hello, "Hello World");
     });
+}
+
+#[test]
+fn test_no_drop_glue_released_eagerly() {
+    assert!(!mem::needs_drop::<u32>());
+    let before = registry::len();
+    for value in 0..64u32 {
+        let sticky = Sticky::new(value);
+        assert_eq!(registry::len(), before + 1);
+        assert_eq!(sticky.with(|value| *value), value);
+    }
+    assert_eq!(registry::len(), before);
+
+    let sticky = Sticky::new(1u32);
+    assert_eq!(sticky.into_inner(), 1);
+    assert_eq!(registry::len(), before);
 }
 
 #[test]

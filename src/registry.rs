@@ -45,6 +45,11 @@ mod slab_impl {
             .ok()
             .flatten()
     }
+
+    #[cfg(test)]
+    pub fn len() -> usize {
+        REGISTRY.with(|registry| registry.borrow().entries.len())
+    }
 }
 
 #[cfg(not(feature = "slab"))]
@@ -101,6 +106,11 @@ mod map_impl {
             .try_with(|registry| registry.borrow_mut().entries.remove(&item_id))
             .ok()
             .flatten()
+    }
+
+    #[cfg(test)]
+    pub fn len() -> usize {
+        REGISTRY.with(|registry| registry.borrow().entries.len())
     }
 }
 
