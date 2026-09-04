@@ -38,10 +38,10 @@ impl<T: Unpin> Unpin for Sticky<T> {}
 impl<T> Drop for Sticky<T> {
     #[track_caller]
     fn drop(&mut self) {
-        // If the type needs dropping we can only do so on the right thread.
-        // Worst case the registry retains the value until the thread dies,
-        // when its destructor will be called.
-        if mem::needs_drop::<T>() && registry::is_available() && self.is_valid() {
+        // If the type needs dropping we can only do so on the originating
+        // thread while its registry is alive. Otherwise the registry retains
+        // the value until the thread dies, when its destructor will be called.
+        if mem::needs_drop::<T>() && self.is_valid() {
             // SAFETY: This is the originating thread and the wrapper is being
             // consumed, so no safe references to the entry can remain.
             unsafe { self.unsafe_drop_value() };
@@ -82,21 +82,43 @@ impl<T> Sticky<T> {
     #[track_caller]
     fn value_ptr(&self) -> *mut T {
         self.assert_thread();
-        registry::get(self.item_id).cast::<T>()
+        match registry::try_get(self.item_id) {
+            Some(ptr) => ptr.cast::<T>(),
+            None => registry_destroyed(),
+        }
+    }
+
+    #[inline(always)]
+    fn try_value_ptr(&self) -> Result<*mut T, InvalidThreadAccess> {
+        if !self.is_on_thread() {
+            return Err(InvalidThreadAccess);
+        }
+        match registry::try_get(self.item_id) {
+            Some(ptr) => Ok(ptr.cast::<T>()),
+            None => Err(InvalidThreadAccess),
+        }
+    }
+
+    #[inline(always)]
+    fn is_on_thread(&self) -> bool {
+        thread_id::current() == self.thread_id
     }
 
     /// Returns `true` if the access is valid.
     ///
-    /// This will be `false` if the value was sent to another thread.
+    /// This will be `false` if the value was sent to another thread.  It is
+    /// also `false` on the originating thread once that thread has started
+    /// destroying its thread local storage, for instance when a `Sticky` is
+    /// accessed from a destructor that runs during thread shutdown.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        thread_id::current() == self.thread_id
+        self.is_on_thread() && registry::is_available()
     }
 
     #[inline(always)]
     #[track_caller]
     fn assert_thread(&self) {
-        if !self.is_valid() {
+        if !self.is_on_thread() {
             panic!("trying to access wrapped value in sticky container from incorrect thread.");
         }
     }
@@ -106,7 +128,8 @@ impl<T> Sticky<T> {
     /// # Panics
     ///
     /// Panics if called from a different thread than the one where the
-    /// original value was created.
+    /// original value was created, or if that thread is already destroying
+    /// its thread local storage.
     #[track_caller]
     pub fn into_inner(mut self) -> T {
         self.assert_thread();
@@ -129,8 +152,12 @@ impl<T> Sticky<T> {
         }
     }
 
+    #[track_caller]
     unsafe fn unsafe_take_value(&mut self) -> T {
-        let ptr = registry::try_remove(self.item_id).unwrap().ptr.cast::<T>();
+        let ptr = match registry::try_remove(self.item_id) {
+            Some(entry) => entry.ptr.cast::<T>(),
+            None => registry_destroyed(),
+        };
         // SAFETY: This is the pointer created for `T` in `new`, and removing
         // the entry transfers its allocation to this call exactly once.
         unsafe { *Box::from_raw(ptr) }
@@ -181,7 +208,8 @@ impl<T> Sticky<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the calling thread is not the one that wrapped the value.
+    /// Panics if the calling thread is not the one that wrapped the value, or
+    /// if that thread is already destroying its thread local storage.
     /// For a non-panicking variant, use [`try_with`](Self::try_with).
     #[track_caller]
     pub fn with<R, F>(&self, f: F) -> R
@@ -208,7 +236,8 @@ impl<T> Sticky<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the calling thread is not the one that wrapped the value.
+    /// Panics if the calling thread is not the one that wrapped the value, or
+    /// if that thread is already destroying its thread local storage.
     /// For a non-panicking variant, use [`try_with_mut`](Self::try_with_mut).
     #[track_caller]
     pub fn with_mut<R, F>(&mut self, f: F) -> R
@@ -225,17 +254,17 @@ impl<T> Sticky<T> {
     /// As with [`with`](Self::with), the callback cannot return a reference
     /// derived from the wrapped value.
     ///
-    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
-    /// from a thread other than the one that wrapped the value.
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if
+    /// [`is_valid`](Self::is_valid) is `false`, that is when called from a
+    /// thread other than the one that wrapped the value or while that thread
+    /// is destroying its thread local storage.
     pub fn try_with<R, F>(&self, f: F) -> Result<R, InvalidThreadAccess>
     where
         F: for<'a> FnOnce(&'a T) -> R,
     {
-        if self.is_valid() {
-            Ok(self.with(f))
-        } else {
-            Err(InvalidThreadAccess)
-        }
+        let ptr = self.try_value_ptr()?;
+        // SAFETY: See `with`.
+        Ok(f(unsafe { &*ptr }))
     }
 
     /// Invokes a callback with an exclusive reference to the wrapped value.
@@ -243,18 +272,24 @@ impl<T> Sticky<T> {
     /// As with [`with_mut`](Self::with_mut), the callback cannot return a
     /// reference derived from the wrapped value.
     ///
-    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
-    /// from a thread other than the one that wrapped the value.
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if
+    /// [`is_valid`](Self::is_valid) is `false`, that is when called from a
+    /// thread other than the one that wrapped the value or while that thread
+    /// is destroying its thread local storage.
     pub fn try_with_mut<R, F>(&mut self, f: F) -> Result<R, InvalidThreadAccess>
     where
         F: for<'a> FnOnce(&'a mut T) -> R,
     {
-        if self.is_valid() {
-            Ok(self.with_mut(f))
-        } else {
-            Err(InvalidThreadAccess)
-        }
+        let ptr = self.try_value_ptr()?;
+        // SAFETY: See `with_mut`.
+        Ok(f(unsafe { &mut *ptr }))
     }
+}
+
+#[cold]
+#[track_caller]
+fn registry_destroyed() -> ! {
+    panic!("trying to access wrapped value in sticky container while its thread's local storage is being destroyed.");
 }
 
 impl<T> From<T> for Sticky<T> {
@@ -552,6 +587,65 @@ fn test_drop_in_tls_destructor() {
     .unwrap();
 
     assert_eq!(drop_count.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_access_during_registry_teardown() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    struct Outcome {
+        errors: AtomicUsize,
+        dropped: AtomicUsize,
+    }
+
+    struct AccessesSibling {
+        sibling: Sticky<String>,
+        outcome: Arc<Outcome>,
+    }
+
+    impl Drop for AccessesSibling {
+        fn drop(&mut self) {
+            // This runs from the registry destructor during thread shutdown.
+            // Non-panicking accessors must report an error instead of
+            // panicking, which would abort the process.
+            if !self.sibling.is_valid() {
+                self.outcome.errors.fetch_add(1, Ordering::SeqCst);
+            }
+            if self.sibling.try_with(|value| value.len()).is_err() {
+                self.outcome.errors.fetch_add(1, Ordering::SeqCst);
+            }
+            if self.sibling.try_with_mut(|value| value.len()).is_err() {
+                self.outcome.errors.fetch_add(1, Ordering::SeqCst);
+            }
+            if format!("{:?}", self.sibling).contains("<invalid thread>") {
+                self.outcome.errors.fetch_add(1, Ordering::SeqCst);
+            }
+            self.outcome.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let outcome = Arc::new(Outcome {
+        errors: AtomicUsize::new(0),
+        dropped: AtomicUsize::new(0),
+    });
+    let thread_outcome = outcome.clone();
+
+    thread::spawn(move || {
+        let value = Sticky::new(AccessesSibling {
+            sibling: Sticky::new(String::from("sibling")),
+            outcome: thread_outcome,
+        });
+        // Move the wrapper away so the value is only released by the
+        // registry when the originating thread shuts down.
+        thread::spawn(move || drop(value)).join().unwrap();
+    })
+    .join()
+    .unwrap();
+
+    assert_eq!(outcome.errors.load(Ordering::SeqCst), 4);
+    assert_eq!(outcome.dropped.load(Ordering::SeqCst), 1);
 }
 
 #[test]

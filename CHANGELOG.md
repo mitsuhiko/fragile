@@ -15,6 +15,11 @@ All notable changes to fragile are documented here.
   `T: Unpin`.
 * Hardened thread-local registry cleanup for nested `Sticky` values and
   reentrant destructors.
+* `Sticky` and `SemiSticky`'s `is_valid`, `try_with`, `try_with_mut`,
+  `try_into_inner` and `Debug` now report an invalid access instead of
+  panicking when used on the originating thread while its thread-local storage
+  is being destroyed. Previously this panicked inside a TLS destructor, which
+  aborts the process.
 * Thread identity checks no longer use `std::thread::current()`, which panics
   during thread-local storage teardown on Rust versions before 1.84. Dropping a
   `Fragile` or `Sticky` from a thread-local destructor on those versions no

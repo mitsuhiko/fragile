@@ -24,15 +24,19 @@ mod slab_impl {
     pub use usize as ItemId;
 
     pub fn insert(entry: Entry) -> ItemId {
-        REGISTRY.with(|registry| registry.borrow_mut().entries.insert(entry))
+        REGISTRY
+            .try_with(|registry| registry.borrow_mut().entries.insert(entry))
+            .unwrap_or_else(|_| super::unavailable())
     }
 
     pub fn is_available() -> bool {
         REGISTRY.try_with(|_| ()).is_ok()
     }
 
-    pub fn get(item_id: ItemId) -> *mut () {
-        REGISTRY.with(|registry| registry.borrow().entries.get(item_id).unwrap().ptr)
+    pub fn try_get(item_id: ItemId) -> Option<*mut ()> {
+        REGISTRY
+            .try_with(|registry| super::entry_ptr(registry.borrow().entries.get(item_id)))
+            .ok()
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
@@ -76,7 +80,9 @@ mod map_impl {
 
     pub fn insert(entry: Entry) -> ItemId {
         let item_id = next_item_id();
-        REGISTRY.with(|registry| registry.borrow_mut().entries.insert(item_id, entry));
+        REGISTRY
+            .try_with(|registry| registry.borrow_mut().entries.insert(item_id, entry))
+            .unwrap_or_else(|_| super::unavailable());
         item_id
     }
 
@@ -84,8 +90,10 @@ mod map_impl {
         REGISTRY.try_with(|_| ()).is_ok()
     }
 
-    pub fn get(item_id: ItemId) -> *mut () {
-        REGISTRY.with(|registry| registry.borrow().entries.get(&item_id).unwrap().ptr)
+    pub fn try_get(item_id: ItemId) -> Option<*mut ()> {
+        REGISTRY
+            .try_with(|registry| super::entry_ptr(registry.borrow().entries.get(&item_id)))
+            .ok()
     }
 
     pub fn try_remove(item_id: ItemId) -> Option<Entry> {
@@ -101,6 +109,18 @@ pub use self::slab_impl::*;
 
 #[cfg(not(feature = "slab"))]
 pub use self::map_impl::*;
+
+#[cold]
+#[track_caller]
+fn unavailable() -> ! {
+    panic!("cannot create sticky container while the thread's local storage is being destroyed.");
+}
+
+fn entry_ptr(entry: Option<&Entry>) -> *mut () {
+    // Entries are only removed when the owning wrapper is consumed, so a live
+    // wrapper always finds its entry.
+    entry.expect("sticky registry entry is missing").ptr
+}
 
 impl Drop for Registry {
     fn drop(&mut self) {

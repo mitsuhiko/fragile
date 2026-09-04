@@ -45,7 +45,9 @@ impl<T> SemiSticky<T> {
 
     /// Returns `true` if the access is valid.
     ///
-    /// This will be `false` if the value was sent to another thread.
+    /// This will be `false` if the value was sent to another thread.  Like
+    /// [`Sticky::is_valid`], it is also `false` on the originating thread once
+    /// that thread has started destroying its thread local storage.
     pub fn is_valid(&self) -> bool {
         match self.inner {
             SemiStickyImpl::Fragile(ref inner) => inner.is_valid(),
@@ -98,7 +100,8 @@ impl<T> SemiSticky<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the calling thread is not the one that wrapped the value.
+    /// Panics if the calling thread is not the one that wrapped the value, or
+    /// if that thread is already destroying its thread local storage.
     /// For a non-panicking variant, use [`try_with`](Self::try_with).
     #[track_caller]
     pub fn with<R, F>(&self, f: F) -> R
@@ -118,7 +121,8 @@ impl<T> SemiSticky<T> {
     ///
     /// # Panics
     ///
-    /// Panics if the calling thread is not the one that wrapped the value.
+    /// Panics if the calling thread is not the one that wrapped the value, or
+    /// if that thread is already destroying its thread local storage.
     /// For a non-panicking variant, use [`try_with_mut`](Self::try_with_mut).
     #[track_caller]
     pub fn with_mut<R, F>(&mut self, f: F) -> R
@@ -136,16 +140,15 @@ impl<T> SemiSticky<T> {
     /// As with [`with`](Self::with), the callback cannot return a reference
     /// derived from the wrapped value.
     ///
-    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
-    /// from a thread other than the one that wrapped the value.
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if
+    /// [`is_valid`](Self::is_valid) is `false`.
     pub fn try_with<R, F>(&self, f: F) -> Result<R, InvalidThreadAccess>
     where
         F: for<'a> FnOnce(&'a T) -> R,
     {
-        if self.is_valid() {
-            Ok(self.with(f))
-        } else {
-            Err(InvalidThreadAccess)
+        match self.inner {
+            SemiStickyImpl::Fragile(ref inner) => inner.try_get().map(f),
+            SemiStickyImpl::Sticky(ref inner) => inner.try_with(f),
         }
     }
 
@@ -154,16 +157,15 @@ impl<T> SemiSticky<T> {
     /// As with [`with_mut`](Self::with_mut), the callback cannot return a
     /// reference derived from the wrapped value.
     ///
-    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
-    /// from a thread other than the one that wrapped the value.
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if
+    /// [`is_valid`](Self::is_valid) is `false`.
     pub fn try_with_mut<R, F>(&mut self, f: F) -> Result<R, InvalidThreadAccess>
     where
         F: for<'a> FnOnce(&'a mut T) -> R,
     {
-        if self.is_valid() {
-            Ok(self.with_mut(f))
-        } else {
-            Err(InvalidThreadAccess)
+        match self.inner {
+            SemiStickyImpl::Fragile(ref mut inner) => inner.try_get_mut().map(f),
+            SemiStickyImpl::Sticky(ref mut inner) => inner.try_with_mut(f),
         }
     }
 }
