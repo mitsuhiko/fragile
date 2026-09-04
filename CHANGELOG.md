@@ -2,7 +2,7 @@
 
 All notable changes to fragile are documented here.
 
-## Unreleased
+## 3.0.0
 
 * Removed `StackToken` and `stack_token!`, and replaced `Sticky` and
   `SemiSticky`'s `get`, `get_mut`, `try_get`, and `try_get_mut` methods with
