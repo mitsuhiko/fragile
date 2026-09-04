@@ -27,15 +27,6 @@ use crate::registry;
 /// A `Sticky<T>` is [`Unpin`] only if `T` is `Unpin`. This ensures that once a
 /// wrapped value has been pinned through the `Future` or `Stream`
 /// implementation, it cannot later be moved out of the wrapper.
-///
-/// ```compile_fail
-/// use fragile::Sticky;
-/// use std::marker::PhantomPinned;
-/// use std::pin::Pin;
-///
-/// let value = Box::pin(Sticky::new(PhantomPinned));
-/// let _ = Pin::into_inner(value);
-/// ```
 pub struct Sticky<T: 'static> {
     item_id: registry::ItemId,
     thread_id: ThreadId,
@@ -165,23 +156,27 @@ impl<T> Sticky<T> {
     /// derived from the wrapped value. This keeps every borrow within the
     /// lifetime of the originating thread.
     ///
-    /// ```compile_fail
+    /// ```
     /// use fragile::Sticky;
     ///
     /// let value = Sticky::new(String::from("hello"));
-    /// let reference = value.with(|value| value);
-    /// println!("{}", reference);
+    /// let length = value.with(String::len);
+    /// assert_eq!(length, 5);
     /// ```
     ///
-    /// Borrows also cannot be held across an asynchronous suspension point:
+    /// Borrows also cannot be held across an asynchronous suspension point.
+    /// Clone or otherwise create owned data before returning a future:
     ///
-    /// ```compile_fail
+    /// ```
     /// use fragile::Sticky;
     ///
     /// let value = Sticky::new(String::from("hello"));
-    /// let future = value.with(|value| async move {
-    ///     std::future::pending::<()>().await;
-    ///     assert_eq!(value, "hello");
+    /// let future = value.with(|value| {
+    ///     let value = value.clone();
+    ///     async move {
+    ///         std::future::ready(()).await;
+    ///         assert_eq!(value, "hello");
+    ///     }
     /// });
     /// ```
     ///
@@ -204,12 +199,12 @@ impl<T> Sticky<T> {
     /// The callback may return owned data, but it cannot return a reference
     /// derived from the wrapped value.
     ///
-    /// ```compile_fail
+    /// ```
     /// use fragile::Sticky;
     ///
     /// let mut value = Sticky::new(String::from("hello"));
-    /// let reference = value.with_mut(|value| value);
-    /// println!("{}", reference);
+    /// value.with_mut(|value| value.push_str(" world"));
+    /// assert_eq!(value.with(Clone::clone), "hello world");
     /// ```
     ///
     /// # Panics

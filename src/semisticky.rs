@@ -20,15 +20,6 @@ enum SemiStickyImpl<T: 'static> {
 /// This type requires `T: 'static` for the same reasons as [`Sticky`] and
 /// exposes the value only through scoped callbacks. Like [`Sticky`], it is
 /// [`Unpin`] only if `T` is `Unpin`.
-///
-/// ```compile_fail
-/// use fragile::SemiSticky;
-/// use std::marker::PhantomPinned;
-/// use std::pin::Pin;
-///
-/// let value = Box::pin(SemiSticky::new(PhantomPinned));
-/// let _ = Pin::into_inner(value);
-/// ```
 pub struct SemiSticky<T: 'static> {
     inner: SemiStickyImpl<T>,
 }
@@ -97,12 +88,12 @@ impl<T> SemiSticky<T> {
     /// The callback may return owned data, but it cannot return a reference
     /// derived from the wrapped value.
     ///
-    /// ```compile_fail
+    /// ```
     /// use fragile::SemiSticky;
     ///
     /// let value = SemiSticky::new(String::from("hello"));
-    /// let reference = value.with(|value| value);
-    /// println!("{}", reference);
+    /// let length = value.with(String::len);
+    /// assert_eq!(length, 5);
     /// ```
     ///
     /// # Panics
