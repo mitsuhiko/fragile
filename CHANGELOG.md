@@ -15,6 +15,9 @@ All notable changes to fragile are documented here.
   `T: Unpin`.
 * Hardened thread-local registry cleanup for nested `Sticky` values and
   reentrant destructors.
+* Fixed stale registry access on platforms that reinitialize thread-local
+  storage during shutdown. Slab IDs now include a registry generation so old
+  wrappers cannot access or destroy values in a replacement registry.
 * Fixed a memory leak where a `Sticky` wrapping a type without drop glue never
   released its allocation when dropped on the originating thread.
 * `Sticky` and `SemiSticky`'s `is_valid`, `try_with`, `try_with_mut`,

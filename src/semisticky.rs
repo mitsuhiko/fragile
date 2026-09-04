@@ -45,9 +45,9 @@ impl<T> SemiSticky<T> {
 
     /// Returns `true` if the access is valid.
     ///
-    /// This will be `false` if the value was sent to another thread.  Like
-    /// [`Sticky::is_valid`], it is also `false` on the originating thread once
-    /// that thread has started destroying its thread local storage.
+    /// This will be `false` if the value was sent to another thread. For values
+    /// stored in [`Sticky`], it is also `false` once their registry starts being
+    /// destroyed. Values without drop glue do not depend on the registry.
     pub fn is_valid(&self) -> bool {
         match self.inner {
             SemiStickyImpl::Fragile(ref inner) => inner.is_valid(),
@@ -101,7 +101,7 @@ impl<T> SemiSticky<T> {
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value, or
-    /// if that thread is already destroying its thread local storage.
+    /// if its thread-local registry has been destroyed.
     /// For a non-panicking variant, use [`try_with`](Self::try_with).
     #[track_caller]
     pub fn with<R, F>(&self, f: F) -> R
@@ -122,7 +122,7 @@ impl<T> SemiSticky<T> {
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value, or
-    /// if that thread is already destroying its thread local storage.
+    /// if its thread-local registry has been destroyed.
     /// For a non-panicking variant, use [`try_with_mut`](Self::try_with_mut).
     #[track_caller]
     pub fn with_mut<R, F>(&mut self, f: F) -> R

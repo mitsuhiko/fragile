@@ -107,12 +107,11 @@ impl<T> Sticky<T> {
     /// Returns `true` if the access is valid.
     ///
     /// This will be `false` if the value was sent to another thread.  It is
-    /// also `false` on the originating thread once that thread has started
-    /// destroying its thread local storage, for instance when a `Sticky` is
-    /// accessed from a destructor that runs during thread shutdown.
+    /// also `false` once its originating registry starts being destroyed,
+    /// even on platforms that subsequently reinitialize thread local storage.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        self.is_on_thread() && registry::is_available()
+        self.try_value_ptr().is_ok()
     }
 
     #[inline(always)]
@@ -190,8 +189,8 @@ impl<T> Sticky<T> {
     /// assert_eq!(length, 5);
     /// ```
     ///
-    /// Borrows also cannot be held across an asynchronous suspension point.
-    /// Clone or otherwise create owned data before returning a future:
+    /// A future borrowing the value cannot escape the callback. Clone or
+    /// otherwise create owned data before returning a future:
     ///
     /// ```
     /// use fragile::Sticky;

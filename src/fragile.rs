@@ -29,8 +29,9 @@ enum FragileValue<T> {
 /// value until the originating thread exits.
 ///
 /// Polling a `Fragile` as a `Future` or `Stream` moves its value to stable heap
-/// storage before the first poll. If a polled `Fragile` is dropped on another
-/// thread, that storage is leaked to preserve the value's pinning invariant.
+/// storage before the first poll. If a polled `Fragile` with drop glue is dropped
+/// on another thread, that storage is leaked to preserve the value's pinning
+/// invariant. A `Fragile<T>` is `Unpin` only if `T` is `Unpin`.
 pub struct Fragile<T> {
     // ManuallyDrop is necessary because we need to move out of here without running the
     // Drop code in functions like `into_inner`, and to leak pinned storage when dropped

@@ -284,6 +284,107 @@ fn test_pinned_fragile_drop_on_wrong_thread_keeps_storage_alive() {
 }
 
 #[test]
+fn test_pinned_sticky_cleanup_at_thread_exit() {
+    use std::sync::atomic::{AtomicPtr, Ordering};
+    use std::sync::Arc;
+
+    fn check<W: Future<Output = ()> + Send + 'static>(wrap: fn(PendingUntilDrop) -> W) {
+        let registration = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
+        let thread_registration = registration.clone();
+        std::thread::spawn(move || {
+            let future = PendingUntilDrop::with_registration(thread_registration.clone());
+            let mut wrapped = Box::pin(wrap(future));
+            let waker = futures_util::task::noop_waker();
+            let mut context = Context::from_waker(&waker);
+            assert!(wrapped.as_mut().poll(&mut context).is_pending());
+            assert!(wrapped.as_mut().poll(&mut context).is_pending());
+            std::thread::spawn(move || drop(wrapped)).join().unwrap();
+            assert!(!thread_registration.load(Ordering::SeqCst).is_null());
+        })
+        .join()
+        .unwrap();
+        assert!(registration.load(Ordering::SeqCst).is_null());
+    }
+
+    check(Sticky::new);
+    check(SemiSticky::new);
+}
+
+#[cfg(test)]
+struct NoDropFuture {
+    address: std::cell::Cell<*const NoDropFuture>,
+    _pin: std::marker::PhantomPinned,
+}
+
+#[cfg(test)]
+impl NoDropFuture {
+    fn new() -> Self {
+        NoDropFuture {
+            address: std::cell::Cell::new(std::ptr::null()),
+            _pin: std::marker::PhantomPinned,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Future for NoDropFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()> {
+        let address = &*self as *const Self;
+        if self.address.get().is_null() {
+            self.address.set(address);
+        } else {
+            assert_eq!(self.address.get(), address);
+        }
+        Poll::Pending
+    }
+}
+
+#[cfg(all(test, feature = "stream"))]
+impl futures_core::Stream for NoDropFuture {
+    type Item = ();
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<()>> {
+        self.poll(cx).map(Some)
+    }
+}
+
+#[test]
+fn test_pinned_no_drop_future_on_wrong_thread() {
+    assert!(!std::mem::needs_drop::<NoDropFuture>());
+    let wrappers: [Pin<Box<dyn Future<Output = ()> + Send>>; 3] = [
+        Box::pin(Fragile::new(NoDropFuture::new())),
+        Box::pin(Sticky::new(NoDropFuture::new())),
+        Box::pin(SemiSticky::new(NoDropFuture::new())),
+    ];
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+    for mut wrapped in wrappers {
+        assert!(wrapped.as_mut().poll(&mut context).is_pending());
+        assert!(wrapped.as_mut().poll(&mut context).is_pending());
+        std::thread::spawn(move || drop(wrapped)).join().unwrap();
+    }
+}
+
+#[cfg(feature = "stream")]
+#[test]
+fn test_pinned_no_drop_stream_on_wrong_thread() {
+    let wrappers: [Pin<Box<dyn futures_core::Stream<Item = ()> + Send>>; 3] = [
+        Box::pin(Fragile::new(NoDropFuture::new())),
+        Box::pin(Sticky::new(NoDropFuture::new())),
+        Box::pin(SemiSticky::new(NoDropFuture::new())),
+    ];
+    let waker = futures_util::task::noop_waker();
+    let mut context = Context::from_waker(&waker);
+    for mut wrapped in wrappers {
+        assert!(wrapped.as_mut().poll_next(&mut context).is_pending());
+        assert!(wrapped.as_mut().poll_next(&mut context).is_pending());
+        std::thread::spawn(move || drop(wrapped)).join().unwrap();
+    }
+}
+
+#[test]
 fn test_future() {
     use futures_executor as executor;
     use futures_util::future;
