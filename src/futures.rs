@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::{stack_token, Fragile, SemiSticky, Sticky};
+use crate::{Fragile, SemiSticky, Sticky};
 
 impl<F: Future> Future for Fragile<F> {
     type Output = F::Output;
@@ -18,14 +18,14 @@ impl<F: Future> Future for Sticky<F> {
 
     #[track_caller]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        stack_token!(tok);
         // SAFETY: We do not move the wrapper through this mutable reference.
         let this = unsafe { self.as_mut().get_unchecked_mut() };
-        let inner = Sticky::get_mut(this, tok);
-        // SAFETY: `Sticky<F>` is `Unpin` only when `F` is `Unpin`, and the
-        // out-of-line value is dropped in place. Pinning the wrapper therefore
-        // pins the value returned by `get_mut` for the rest of its lifetime.
-        unsafe { Pin::new_unchecked(inner) }.poll(cx)
+        this.with_mut(|inner| {
+            // SAFETY: `Sticky<F>` is `Unpin` only when `F` is `Unpin`, and the
+            // out-of-line value is dropped in place. Pinning the wrapper therefore
+            // pins the value for the rest of its lifetime.
+            unsafe { Pin::new_unchecked(inner) }.poll(cx)
+        })
     }
 }
 
@@ -34,13 +34,13 @@ impl<F: Future> Future for SemiSticky<F> {
 
     #[track_caller]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        stack_token!(tok);
         // SAFETY: We do not move the wrapper through this mutable reference.
         let this = unsafe { self.as_mut().get_unchecked_mut() };
-        let inner = SemiSticky::get_mut(this, tok);
-        // SAFETY: `SemiSticky<F>` is `Unpin` only when `F` is `Unpin`, and its
-        // storage does not move the value while the wrapper is pinned.
-        unsafe { Pin::new_unchecked(inner) }.poll(cx)
+        this.with_mut(|inner| {
+            // SAFETY: `SemiSticky<F>` is `Unpin` only when `F` is `Unpin`, and its
+            // storage does not move the value while the wrapper is pinned.
+            unsafe { Pin::new_unchecked(inner) }.poll(cx)
+        })
     }
 }
 
@@ -71,21 +71,18 @@ mod stream {
 
         #[track_caller]
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            stack_token!(tok);
             // SAFETY: See the corresponding `Future` implementation.
             let this = unsafe { self.as_mut().get_unchecked_mut() };
-            let inner = Sticky::get_mut(this, tok);
-            // SAFETY: See the corresponding `Future` implementation.
-            unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
+            this.with_mut(|inner| {
+                // SAFETY: See the corresponding `Future` implementation.
+                unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
+            })
         }
 
         #[inline]
         fn size_hint(&self) -> (usize, Option<usize>) {
-            stack_token!(tok);
-            match Sticky::try_get(self, tok) {
-                Ok(x) => x.size_hint(),
-                Err(_) => (0, None),
-            }
+            self.try_with(|inner| inner.size_hint())
+                .unwrap_or((0, None))
         }
     }
 
@@ -94,21 +91,18 @@ mod stream {
 
         #[track_caller]
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-            stack_token!(tok);
             // SAFETY: See the corresponding `Future` implementation.
             let this = unsafe { self.as_mut().get_unchecked_mut() };
-            let inner = SemiSticky::get_mut(this, tok);
-            // SAFETY: See the corresponding `Future` implementation.
-            unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
+            this.with_mut(|inner| {
+                // SAFETY: See the corresponding `Future` implementation.
+                unsafe { Pin::new_unchecked(inner) }.poll_next(cx)
+            })
         }
 
         #[inline]
         fn size_hint(&self) -> (usize, Option<usize>) {
-            stack_token!(tok);
-            match SemiSticky::try_get(self, tok) {
-                Ok(x) => x.size_hint(),
-                Err(_) => (0, None),
-            }
+            self.try_with(|inner| inner.size_hint())
+                .unwrap_or((0, None))
         }
     }
 

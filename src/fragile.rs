@@ -26,8 +26,8 @@ enum FragileValue<T> {
 ///
 /// If the value needs destruction and the fragile wrapper is on another thread
 /// the destructor will panic.  Alternatively you can use
-/// [`Sticky`](crate::Sticky) which is not going to panic but might temporarily
-/// leak the value.
+/// [`Sticky`](crate::Sticky), which does not panic and instead retains the
+/// value until the originating thread exits.
 ///
 /// Polling a `Fragile` as a `Future` or `Stream` moves its value to stable heap
 /// storage before the first poll. If a polled `Fragile` is dropped on another

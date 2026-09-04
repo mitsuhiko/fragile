@@ -1,6 +1,20 @@
 # Changelog
 
-All notable changes to similar are documented here.
+All notable changes to fragile are documented here.
+
+## Unreleased
+
+* Removed `StackToken` and `stack_token!`, and replaced `Sticky` and
+  `SemiSticky`'s `get`, `get_mut`, `try_get`, and `try_get_mut` methods with
+  scoped `with`, `with_mut`, `try_with`, and `try_with_mut` callbacks. This
+  breaking change prevents thread-local references from escaping and removes
+  the need to permanently leak registry values.
+* Fixed soundness issues in the `Future` and `Stream` implementations that could
+  move `!Unpin` values after pinning or free pinned storage on the wrong thread.
+  As a result, `Sticky<T>` and `SemiSticky<T>` now implement `Unpin` only when
+  `T: Unpin`.
+* Hardened thread-local registry cleanup for nested `Sticky` values and
+  reentrant destructors.
 
 ## 2.1.0
 

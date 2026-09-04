@@ -10,14 +10,15 @@ threads and use runtime checks to ensure safety.
 It provides the `Fragile<T>`, `Sticky<T>` and `SemiSticky<T>` types which are
 similar in nature but have different behaviors with regards to how destructors
 are executed.  The `Fragile<T>` will panic if the destructor is called in another
-thread, `Sticky<T>` will temporarily leak the object until the thread shuts down.
-If a live stack token outlives that thread, the value is leaked permanently to
-keep outstanding references valid. `SemiSticky<T>` is a compromise of the two. It
-avoids the use of thread local storage if the type does not need `Drop`.
+thread, while `Sticky<T>` retains the object until the originating thread shuts
+down. Access to sticky values happens through scoped callbacks so references
+cannot outlive that thread. `SemiSticky<T>` is a compromise of the two. It avoids
+the use of thread local storage if the type does not need `Drop`.
 
 ## Example
 
 ```rust
+use fragile::Fragile;
 use std::thread;
 
 // creating and using a fragile object in the same thread works

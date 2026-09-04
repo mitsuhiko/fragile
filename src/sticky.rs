@@ -1,5 +1,3 @@
-#![allow(clippy::unit_arg)]
-
 use std::cmp;
 use std::fmt;
 use std::marker::{PhantomData, PhantomPinned};
@@ -9,7 +7,6 @@ use std::thread::ThreadId;
 
 use crate::errors::InvalidThreadAccess;
 use crate::registry;
-use crate::StackToken;
 
 /// A [`Sticky<T>`] keeps a value T stored in a thread.
 ///
@@ -17,15 +14,12 @@ use crate::StackToken;
 /// similar interface.  The difference is that whereas [`Fragile`](crate::Fragile) has
 /// its destructor called in the thread where the value was sent, a
 /// [`Sticky`] that is moved to another thread will have the internal
-/// destructor called when the originating thread tears down. If a live
-/// [`StackToken`] outlives that thread, registry values are instead leaked to
-/// keep outstanding references valid.
+/// destructor called when the originating thread tears down.
 ///
 /// Because [`Sticky`] allows values to be kept alive for longer than the
 /// [`Sticky`] itself, it requires all its contents to be `'static` for
-/// soundness.  More importantly it also requires the use of [`StackToken`]s.
-/// For information about how to use stack tokens and why they are needed,
-/// refer to [`stack_token!`](crate::stack_token).
+/// soundness. Access to the value is limited to scoped callbacks so references
+/// cannot outlive the callback or the originating thread.
 ///
 /// As this uses TLS internally the general rules about the platform limitations
 /// of destructors for TLS apply.
@@ -55,8 +49,8 @@ impl<T> Drop for Sticky<T> {
     #[track_caller]
     fn drop(&mut self) {
         // If the type needs dropping we can only do so on the right thread.
-        // Worst case we leak the value until the thread dies, when drop will be
-        // called by the registry.
+        // Worst case the registry retains the value until the thread dies,
+        // when its destructor will be called.
         if mem::needs_drop::<T>() && registry::is_available() && self.is_valid() {
             // SAFETY: This is the originating thread and the wrapper is being
             // consumed, so no safe references to the entry can remain.
@@ -96,10 +90,9 @@ impl<T> Sticky<T> {
 
     #[inline(always)]
     #[track_caller]
-    fn with_value<F: FnOnce(*mut T) -> R, R>(&self, f: F) -> R {
+    fn value_ptr(&self) -> *mut T {
         self.assert_thread();
-
-        f(registry::get(self.item_id).cast::<T>())
+        registry::get(self.item_id).cast::<T>()
     }
 
     /// Returns `true` if the access is valid.
@@ -166,67 +159,104 @@ impl<T> Sticky<T> {
         }
     }
 
-    /// Immutably borrows the wrapped value.
+    /// Invokes a callback with a shared reference to the wrapped value.
+    ///
+    /// The callback may return owned data, but it cannot return a reference
+    /// derived from the wrapped value. This keeps every borrow within the
+    /// lifetime of the originating thread.
+    ///
+    /// ```compile_fail
+    /// use fragile::Sticky;
+    ///
+    /// let value = Sticky::new(String::from("hello"));
+    /// let reference = value.with(|value| value);
+    /// println!("{}", reference);
+    /// ```
+    ///
+    /// Borrows also cannot be held across an asynchronous suspension point:
+    ///
+    /// ```compile_fail
+    /// use fragile::Sticky;
+    ///
+    /// let value = Sticky::new(String::from("hello"));
+    /// let future = value.with(|value| async move {
+    ///     std::future::pending::<()>().await;
+    ///     assert_eq!(value, "hello");
+    /// });
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get`](#method.try_get`).
+    /// For a non-panicking variant, use [`try_with`](Self::try_with).
     #[track_caller]
-    pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
-        self.with_value(|value| {
-            // SAFETY: The entry owns a live `T`, and the returned reference is
-            // bounded by shared borrows of both the wrapper and stack token.
-            unsafe { &*value }
-        })
+    pub fn with<R, F>(&self, f: F) -> R
+    where
+        F: for<'a> FnOnce(&'a T) -> R,
+    {
+        // SAFETY: The registry entry owns a live `T`. The higher-ranked
+        // callback bound prevents this reference from escaping the call.
+        f(unsafe { &*self.value_ptr() })
     }
 
-    /// Mutably borrows the wrapped value.
+    /// Invokes a callback with an exclusive reference to the wrapped value.
+    ///
+    /// The callback may return owned data, but it cannot return a reference
+    /// derived from the wrapped value.
+    ///
+    /// ```compile_fail
+    /// use fragile::Sticky;
+    ///
+    /// let mut value = Sticky::new(String::from("hello"));
+    /// let reference = value.with_mut(|value| value);
+    /// println!("{}", reference);
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get_mut`](#method.try_get_mut`).
+    /// For a non-panicking variant, use [`try_with_mut`](Self::try_with_mut).
     #[track_caller]
-    pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
-        self.with_value(|value| {
-            // SAFETY: The entry owns a live `T`, and the exclusive wrapper
-            // borrow prevents any other safe access for the returned lifetime.
-            unsafe { &mut *value }
-        })
+    pub fn with_mut<R, F>(&mut self, f: F) -> R
+    where
+        F: for<'a> FnOnce(&'a mut T) -> R,
+    {
+        // SAFETY: The registry entry owns a live `T`, `self` is borrowed
+        // exclusively, and the callback bound prevents the reference escaping.
+        f(unsafe { &mut *self.value_ptr() })
     }
 
-    /// Tries to immutably borrow the wrapped value.
+    /// Invokes a callback with a shared reference to the wrapped value.
     ///
-    /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get<'stack>(
-        &'stack self,
-        _proof: &'stack StackToken,
-    ) -> Result<&'stack T, InvalidThreadAccess> {
+    /// As with [`with`](Self::with), the callback cannot return a reference
+    /// derived from the wrapped value.
+    ///
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
+    /// from a thread other than the one that wrapped the value.
+    pub fn try_with<R, F>(&self, f: F) -> Result<R, InvalidThreadAccess>
+    where
+        F: for<'a> FnOnce(&'a T) -> R,
+    {
         if self.is_valid() {
-            Ok(self.with_value(|value| {
-                // SAFETY: The entry owns a live `T`, and the returned reference
-                // is bounded by shared borrows of the wrapper and stack token.
-                unsafe { &*value }
-            }))
+            Ok(self.with(f))
         } else {
             Err(InvalidThreadAccess)
         }
     }
 
-    /// Tries to mutably borrow the wrapped value.
+    /// Invokes a callback with an exclusive reference to the wrapped value.
     ///
-    /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get_mut<'stack>(
-        &'stack mut self,
-        _proof: &'stack StackToken,
-    ) -> Result<&'stack mut T, InvalidThreadAccess> {
+    /// As with [`with_mut`](Self::with_mut), the callback cannot return a
+    /// reference derived from the wrapped value.
+    ///
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
+    /// from a thread other than the one that wrapped the value.
+    pub fn try_with_mut<R, F>(&mut self, f: F) -> Result<R, InvalidThreadAccess>
+    where
+        F: for<'a> FnOnce(&'a mut T) -> R,
+    {
         if self.is_valid() {
-            Ok(self.with_value(|value| {
-                // SAFETY: The entry owns a live `T`, and the exclusive wrapper
-                // borrow prevents other safe access for the returned lifetime.
-                unsafe { &mut *value }
-            }))
+            Ok(self.with_mut(f))
         } else {
             Err(InvalidThreadAccess)
         }
@@ -244,8 +274,7 @@ impl<T: Clone> Clone for Sticky<T> {
     #[inline]
     #[track_caller]
     fn clone(&self) -> Sticky<T> {
-        crate::stack_token!(tok);
-        Sticky::new(self.get(tok).clone())
+        Sticky::new(self.with(Clone::clone))
     }
 }
 
@@ -260,8 +289,7 @@ impl<T: PartialEq> PartialEq for Sticky<T> {
     #[inline]
     #[track_caller]
     fn eq(&self, other: &Sticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) == *other.get(tok)
+        self.with(|this| other.with(|other| this == other))
     }
 }
 
@@ -271,36 +299,31 @@ impl<T: PartialOrd> PartialOrd for Sticky<T> {
     #[inline]
     #[track_caller]
     fn partial_cmp(&self, other: &Sticky<T>) -> Option<cmp::Ordering> {
-        crate::stack_token!(tok);
-        self.get(tok).partial_cmp(other.get(tok))
+        self.with(|this| other.with(|other| this.partial_cmp(other)))
     }
 
     #[inline]
     #[track_caller]
     fn lt(&self, other: &Sticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) < *other.get(tok)
+        self.with(|this| other.with(|other| this < other))
     }
 
     #[inline]
     #[track_caller]
     fn le(&self, other: &Sticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) <= *other.get(tok)
+        self.with(|this| other.with(|other| this <= other))
     }
 
     #[inline]
     #[track_caller]
     fn gt(&self, other: &Sticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) > *other.get(tok)
+        self.with(|this| other.with(|other| this > other))
     }
 
     #[inline]
     #[track_caller]
     fn ge(&self, other: &Sticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) >= *other.get(tok)
+        self.with(|this| other.with(|other| this >= other))
     }
 }
 
@@ -308,36 +331,32 @@ impl<T: Ord> Ord for Sticky<T> {
     #[inline]
     #[track_caller]
     fn cmp(&self, other: &Sticky<T>) -> cmp::Ordering {
-        crate::stack_token!(tok);
-        self.get(tok).cmp(other.get(tok))
+        self.with(|this| other.with(|other| this.cmp(other)))
     }
 }
 
 impl<T: fmt::Display> fmt::Display for Sticky<T> {
     #[track_caller]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        crate::stack_token!(tok);
-        fmt::Display::fmt(self.get(tok), f)
+        self.with(|value| fmt::Display::fmt(value, f))
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for Sticky<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        crate::stack_token!(tok);
-        match self.try_get(tok) {
-            Ok(value) => f.debug_struct("Sticky").field("value", value).finish(),
-            Err(..) => {
-                struct InvalidPlaceholder;
-                impl fmt::Debug for InvalidPlaceholder {
-                    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                        f.write_str("<invalid thread>")
-                    }
+        if self.is_valid() {
+            self.with(|value| f.debug_struct("Sticky").field("value", value).finish())
+        } else {
+            struct InvalidPlaceholder;
+            impl fmt::Debug for InvalidPlaceholder {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("<invalid thread>")
                 }
-
-                f.debug_struct("Sticky")
-                    .field("value", &InvalidPlaceholder)
-                    .finish()
             }
+
+            f.debug_struct("Sticky")
+                .field("value", &InvalidPlaceholder)
+                .finish()
         }
     }
 }
@@ -354,13 +373,15 @@ unsafe impl<T> Send for Sticky<T> {}
 fn test_basic() {
     use std::thread;
     let val = Sticky::new(true);
-    crate::stack_token!(tok);
     assert_eq!(val.to_string(), "true");
-    assert_eq!(val.get(tok), &true);
-    assert!(val.try_get(tok).is_ok());
+    assert!(val.with(|value| *value));
+    assert!(val.try_with(|value| *value).unwrap());
+    let external = String::from("external");
+    assert_eq!(val.with(|_| external.as_str()), "external");
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        assert!(val.try_get(tok).is_err());
+        assert!(val
+            .try_with(|_| panic!("callback ran on the wrong thread"))
+            .is_err());
     })
     .join()
     .unwrap();
@@ -369,20 +390,27 @@ fn test_basic() {
 #[test]
 fn test_mut() {
     let mut val = Sticky::new(true);
-    crate::stack_token!(tok);
-    *val.get_mut(tok) = false;
+    val.with_mut(|value| *value = false);
     assert_eq!(val.to_string(), "false");
-    assert_eq!(val.get(tok), &false);
+    assert!(!val.with(|value| *value));
+    assert!(val
+        .try_with_mut(|value| {
+            *value = true;
+            *value
+        })
+        .unwrap());
 }
 
 #[test]
 #[should_panic]
 fn test_access_other_thread() {
     use std::thread;
-    let val = Sticky::new(true);
+    let mut val = Sticky::new(true);
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        val.get(tok);
+        assert!(val
+            .try_with_mut(|_| panic!("mutable callback ran on the wrong thread"))
+            .is_err());
+        val.with(|_| ());
     })
     .join()
     .unwrap();
@@ -423,10 +451,10 @@ fn test_noop_drop_elsewhere() {
             }
 
             let val = Sticky::new(X(was_called.clone()));
+            val.with(|_| ());
             assert!(thread::spawn(move || {
                 // moves it here but do not deallocate
-                crate::stack_token!(tok);
-                val.try_get(tok).ok();
+                val.try_with(|_| ()).ok();
             })
             .join()
             .is_ok());
@@ -446,8 +474,9 @@ fn test_rc_sending() {
     use std::thread;
     let val = Sticky::new(Rc::new(true));
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        assert!(val.try_get(tok).is_err());
+        assert!(val
+            .try_with(|_| panic!("callback ran on the wrong thread"))
+            .is_err());
     })
     .join()
     .unwrap();
@@ -473,93 +502,31 @@ fn test_two_stickies() {
 }
 
 #[test]
+fn test_registry_mutation_during_callback() {
+    let first = Sticky::new(String::from("first"));
+    let second = Sticky::new(String::from("second"));
+
+    first.with(|first| {
+        drop(second);
+        let third = Sticky::new(String::from("third"));
+        assert_eq!(third.with(|value| value.clone()), "third");
+        assert_eq!(first, "first");
+    });
+}
+
+#[test]
 fn test_thread_spawn() {
-    use crate::{stack_token, Sticky};
+    use crate::Sticky;
     use std::{mem::ManuallyDrop, thread};
 
     let dummy_sticky = thread::spawn(|| Sticky::new(())).join().unwrap();
     let sticky_string = ManuallyDrop::new(Sticky::new(String::from("Hello World")));
-    stack_token!(t);
 
-    let hello: &str = sticky_string.get(t);
-
-    assert_eq!(hello, "Hello World");
-    drop(dummy_sticky);
-    assert_eq!(hello, "Hello World");
-}
-
-#[test]
-fn test_async_stack_token_keeps_registry_alive() {
-    use std::future::Future;
-    use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
-    use std::sync::{mpsc, Arc};
-    use std::task::{Context, Poll};
-    use std::thread;
-
-    struct ReadOnDrop<'a> {
-        value: &'a String,
-        dropped: Arc<AtomicBool>,
-    }
-
-    impl Drop for ReadOnDrop<'_> {
-        fn drop(&mut self) {
-            assert_eq!(self.value, "still alive");
-            self.dropped.store(true, Ordering::SeqCst);
-        }
-    }
-
-    let dropped = Arc::new(AtomicBool::new(false));
-    let registered = Arc::new(AtomicPtr::new(std::ptr::null_mut()));
-    let (wrapped_tx, wrapped_rx) = mpsc::channel();
-    let (exit_tx, exit_rx) = mpsc::channel();
-
-    let origin = thread::spawn({
-        let dropped = dropped.clone();
-        let registered = registered.clone();
-        move || {
-            let sticky = Box::leak(Box::new(Sticky::new(String::from("still alive"))));
-            let future = Box::pin(async move {
-                crate::stack_token!(token);
-                let guard = ReadOnDrop {
-                    value: sticky.get(token),
-                    dropped,
-                };
-                registered.store(
-                    guard.value as *const String as *mut String,
-                    Ordering::SeqCst,
-                );
-                std::future::pending::<()>().await;
-                drop(guard);
-            });
-            let mut wrapped = Sticky::new(future);
-
-            {
-                crate::stack_token!(access_token);
-                let waker = futures_util::task::noop_waker();
-                let mut context = Context::from_waker(&waker);
-                assert!(matches!(
-                    Future::poll(wrapped.get_mut(access_token).as_mut(), &mut context),
-                    Poll::Pending
-                ));
-            }
-
-            wrapped_tx.send(wrapped).unwrap();
-            exit_rx.recv().unwrap();
-        }
+    sticky_string.with(|hello| {
+        assert_eq!(hello, "Hello World");
+        drop(dummy_sticky);
+        assert_eq!(hello, "Hello World");
     });
-
-    let wrapped = wrapped_rx.recv().unwrap();
-    drop(wrapped);
-    exit_tx.send(()).unwrap();
-    origin.join().unwrap();
-
-    // The suspended future and borrowed registry value are intentionally kept
-    // alive because their destruction order cannot otherwise be guaranteed.
-    assert!(!dropped.load(Ordering::SeqCst));
-    let registered = registered.load(Ordering::SeqCst);
-    assert!(!registered.is_null());
-    // SAFETY: The suspended stack token must keep this registry allocation alive.
-    assert_eq!(unsafe { &*registered }, "still alive");
 }
 
 #[test]

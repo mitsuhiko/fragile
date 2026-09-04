@@ -5,7 +5,6 @@ use std::mem;
 use crate::errors::InvalidThreadAccess;
 use crate::fragile::Fragile;
 use crate::sticky::Sticky;
-use crate::StackToken;
 
 enum SemiStickyImpl<T: 'static> {
     Fragile(Box<Fragile<T>>),
@@ -19,8 +18,8 @@ enum SemiStickyImpl<T: 'static> {
 /// will be internally behave like a [`Sticky`].
 ///
 /// This type requires `T: 'static` for the same reasons as [`Sticky`] and
-/// also uses [`StackToken`]s. Like [`Sticky`], it is [`Unpin`] only if `T` is
-/// `Unpin`.
+/// exposes the value only through scoped callbacks. Like [`Sticky`], it is
+/// [`Unpin`] only if `T` is `Unpin`.
 ///
 /// ```compile_fail
 /// use fragile::SemiSticky;
@@ -93,57 +92,87 @@ impl<T> SemiSticky<T> {
         }
     }
 
-    /// Immutably borrows the wrapped value.
+    /// Invokes a callback with a shared reference to the wrapped value.
+    ///
+    /// The callback may return owned data, but it cannot return a reference
+    /// derived from the wrapped value.
+    ///
+    /// ```compile_fail
+    /// use fragile::SemiSticky;
+    ///
+    /// let value = SemiSticky::new(String::from("hello"));
+    /// let reference = value.with(|value| value);
+    /// println!("{}", reference);
+    /// ```
     ///
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get`](Self::try_get).
+    /// For a non-panicking variant, use [`try_with`](Self::try_with).
     #[track_caller]
-    pub fn get<'stack>(&'stack self, _proof: &'stack StackToken) -> &'stack T {
+    pub fn with<R, F>(&self, f: F) -> R
+    where
+        F: for<'a> FnOnce(&'a T) -> R,
+    {
         match self.inner {
-            SemiStickyImpl::Fragile(ref inner) => inner.get(),
-            SemiStickyImpl::Sticky(ref inner) => inner.get(_proof),
+            SemiStickyImpl::Fragile(ref inner) => f(inner.get()),
+            SemiStickyImpl::Sticky(ref inner) => inner.with(f),
         }
     }
 
-    /// Mutably borrows the wrapped value.
+    /// Invokes a callback with an exclusive reference to the wrapped value.
+    ///
+    /// The callback may return owned data, but it cannot return a reference
+    /// derived from the wrapped value.
     ///
     /// # Panics
     ///
     /// Panics if the calling thread is not the one that wrapped the value.
-    /// For a non-panicking variant, use [`try_get_mut`](Self::try_get_mut).
+    /// For a non-panicking variant, use [`try_with_mut`](Self::try_with_mut).
     #[track_caller]
-    pub fn get_mut<'stack>(&'stack mut self, _proof: &'stack StackToken) -> &'stack mut T {
+    pub fn with_mut<R, F>(&mut self, f: F) -> R
+    where
+        F: for<'a> FnOnce(&'a mut T) -> R,
+    {
         match self.inner {
-            SemiStickyImpl::Fragile(ref mut inner) => inner.get_mut(),
-            SemiStickyImpl::Sticky(ref mut inner) => inner.get_mut(_proof),
+            SemiStickyImpl::Fragile(ref mut inner) => f(inner.get_mut()),
+            SemiStickyImpl::Sticky(ref mut inner) => inner.with_mut(f),
         }
     }
 
-    /// Tries to immutably borrow the wrapped value.
+    /// Invokes a callback with a shared reference to the wrapped value.
     ///
-    /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get<'stack>(
-        &'stack self,
-        _proof: &'stack StackToken,
-    ) -> Result<&'stack T, InvalidThreadAccess> {
-        match self.inner {
-            SemiStickyImpl::Fragile(ref inner) => inner.try_get(),
-            SemiStickyImpl::Sticky(ref inner) => inner.try_get(_proof),
+    /// As with [`with`](Self::with), the callback cannot return a reference
+    /// derived from the wrapped value.
+    ///
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
+    /// from a thread other than the one that wrapped the value.
+    pub fn try_with<R, F>(&self, f: F) -> Result<R, InvalidThreadAccess>
+    where
+        F: for<'a> FnOnce(&'a T) -> R,
+    {
+        if self.is_valid() {
+            Ok(self.with(f))
+        } else {
+            Err(InvalidThreadAccess)
         }
     }
 
-    /// Tries to mutably borrow the wrapped value.
+    /// Invokes a callback with an exclusive reference to the wrapped value.
     ///
-    /// Returns `None` if the calling thread is not the one that wrapped the value.
-    pub fn try_get_mut<'stack>(
-        &'stack mut self,
-        _proof: &'stack StackToken,
-    ) -> Result<&'stack mut T, InvalidThreadAccess> {
-        match self.inner {
-            SemiStickyImpl::Fragile(ref mut inner) => inner.try_get_mut(),
-            SemiStickyImpl::Sticky(ref mut inner) => inner.try_get_mut(_proof),
+    /// As with [`with_mut`](Self::with_mut), the callback cannot return a
+    /// reference derived from the wrapped value.
+    ///
+    /// Returns [`InvalidThreadAccess`] without invoking the callback if called
+    /// from a thread other than the one that wrapped the value.
+    pub fn try_with_mut<R, F>(&mut self, f: F) -> Result<R, InvalidThreadAccess>
+    where
+        F: for<'a> FnOnce(&'a mut T) -> R,
+    {
+        if self.is_valid() {
+            Ok(self.with_mut(f))
+        } else {
+            Err(InvalidThreadAccess)
         }
     }
 }
@@ -159,8 +188,7 @@ impl<T: Clone> Clone for SemiSticky<T> {
     #[inline]
     #[track_caller]
     fn clone(&self) -> SemiSticky<T> {
-        crate::stack_token!(tok);
-        SemiSticky::new(self.get(tok).clone())
+        SemiSticky::new(self.with(Clone::clone))
     }
 }
 
@@ -175,8 +203,7 @@ impl<T: PartialEq> PartialEq for SemiSticky<T> {
     #[inline]
     #[track_caller]
     fn eq(&self, other: &SemiSticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) == *other.get(tok)
+        self.with(|this| other.with(|other| this == other))
     }
 }
 
@@ -186,36 +213,31 @@ impl<T: PartialOrd> PartialOrd for SemiSticky<T> {
     #[inline]
     #[track_caller]
     fn partial_cmp(&self, other: &SemiSticky<T>) -> Option<cmp::Ordering> {
-        crate::stack_token!(tok);
-        self.get(tok).partial_cmp(other.get(tok))
+        self.with(|this| other.with(|other| this.partial_cmp(other)))
     }
 
     #[inline]
     #[track_caller]
     fn lt(&self, other: &SemiSticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) < *other.get(tok)
+        self.with(|this| other.with(|other| this < other))
     }
 
     #[inline]
     #[track_caller]
     fn le(&self, other: &SemiSticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) <= *other.get(tok)
+        self.with(|this| other.with(|other| this <= other))
     }
 
     #[inline]
     #[track_caller]
     fn gt(&self, other: &SemiSticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) > *other.get(tok)
+        self.with(|this| other.with(|other| this > other))
     }
 
     #[inline]
     #[track_caller]
     fn ge(&self, other: &SemiSticky<T>) -> bool {
-        crate::stack_token!(tok);
-        *self.get(tok) >= *other.get(tok)
+        self.with(|this| other.with(|other| this >= other))
     }
 }
 
@@ -223,36 +245,32 @@ impl<T: Ord> Ord for SemiSticky<T> {
     #[inline]
     #[track_caller]
     fn cmp(&self, other: &SemiSticky<T>) -> cmp::Ordering {
-        crate::stack_token!(tok);
-        self.get(tok).cmp(other.get(tok))
+        self.with(|this| other.with(|other| this.cmp(other)))
     }
 }
 
 impl<T: fmt::Display> fmt::Display for SemiSticky<T> {
     #[track_caller]
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        crate::stack_token!(tok);
-        fmt::Display::fmt(self.get(tok), f)
+        self.with(|value| fmt::Display::fmt(value, f))
     }
 }
 
 impl<T: fmt::Debug> fmt::Debug for SemiSticky<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        crate::stack_token!(tok);
-        match self.try_get(tok) {
-            Ok(value) => f.debug_struct("SemiSticky").field("value", value).finish(),
-            Err(..) => {
-                struct InvalidPlaceholder;
-                impl fmt::Debug for InvalidPlaceholder {
-                    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                        f.write_str("<invalid thread>")
-                    }
+        if self.is_valid() {
+            self.with(|value| f.debug_struct("SemiSticky").field("value", value).finish())
+        } else {
+            struct InvalidPlaceholder;
+            impl fmt::Debug for InvalidPlaceholder {
+                fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                    f.write_str("<invalid thread>")
                 }
-
-                f.debug_struct("SemiSticky")
-                    .field("value", &InvalidPlaceholder)
-                    .finish()
             }
+
+            f.debug_struct("SemiSticky")
+                .field("value", &InvalidPlaceholder)
+                .finish()
         }
     }
 }
@@ -261,13 +279,13 @@ impl<T: fmt::Debug> fmt::Debug for SemiSticky<T> {
 fn test_basic() {
     use std::thread;
     let val = SemiSticky::new(true);
-    crate::stack_token!(tok);
     assert_eq!(val.to_string(), "true");
-    assert_eq!(val.get(tok), &true);
-    assert!(val.try_get(tok).is_ok());
+    assert!(val.with(|value| *value));
+    assert!(val.try_with(|value| *value).unwrap());
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        assert!(val.try_get(tok).is_err());
+        assert!(val
+            .try_with(|_| panic!("callback ran on the wrong thread"))
+            .is_err());
     })
     .join()
     .unwrap();
@@ -276,20 +294,27 @@ fn test_basic() {
 #[test]
 fn test_mut() {
     let mut val = SemiSticky::new(true);
-    crate::stack_token!(tok);
-    *val.get_mut(tok) = false;
+    val.with_mut(|value| *value = false);
     assert_eq!(val.to_string(), "false");
-    assert_eq!(val.get(tok), &false);
+    assert!(!val.with(|value| *value));
+    assert!(val
+        .try_with_mut(|value| {
+            *value = true;
+            *value
+        })
+        .unwrap());
 }
 
 #[test]
 #[should_panic]
 fn test_access_other_thread() {
     use std::thread;
-    let val = SemiSticky::new(true);
+    let mut val = SemiSticky::new(true);
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        val.get(tok);
+        assert!(val
+            .try_with_mut(|_| panic!("mutable callback ran on the wrong thread"))
+            .is_err());
+        val.with(|_| ());
     })
     .join()
     .unwrap();
@@ -330,10 +355,10 @@ fn test_noop_drop_elsewhere() {
             }
 
             let val = SemiSticky::new(X(was_called.clone()));
+            val.with(|_| ());
             assert!(thread::spawn(move || {
                 // moves it here but do not deallocate
-                crate::stack_token!(tok);
-                val.try_get(tok).ok();
+                val.try_with(|_| ()).ok();
             })
             .join()
             .is_ok());
@@ -353,8 +378,9 @@ fn test_rc_sending() {
     use std::thread;
     let val = SemiSticky::new(Rc::new(true));
     thread::spawn(move || {
-        crate::stack_token!(tok);
-        assert!(val.try_get(tok).is_err());
+        assert!(val
+            .try_with(|_| panic!("callback ran on the wrong thread"))
+            .is_err());
     })
     .join()
     .unwrap();

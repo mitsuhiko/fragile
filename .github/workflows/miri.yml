@@ -15,6 +15,10 @@ jobs:
           components: miri
       - name: Prepare Miri
         run: cargo miri setup
+      - name: Test sticky cleanup without leaks
+        run: |
+          cargo miri test --no-default-features sticky::
+          cargo miri test --all-features sticky::
       - name: Test without default features
         run: cargo miri test --no-default-features
         env:
