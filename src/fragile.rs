@@ -4,10 +4,9 @@ use std::mem;
 use std::mem::ManuallyDrop;
 #[cfg(feature = "future")]
 use std::pin::Pin;
-use std::thread;
-use std::thread::ThreadId;
 
 use crate::errors::InvalidThreadAccess;
+use crate::thread_id::{self, ThreadId};
 
 /// The value starts inline and is moved to stable storage before the first
 /// pinned projection.
@@ -37,7 +36,8 @@ pub struct Fragile<T> {
     // Drop code in functions like `into_inner`, and to leak pinned storage when dropped
     // on the wrong thread.
     value: ManuallyDrop<FragileValue<T>>,
-    // we can use ThreadId because Rust guarnatees it to be unique for the duration of a process.
+    // Thread IDs are unique for the duration of the process and stay readable
+    // during thread local storage teardown.
     thread_id: ThreadId,
 }
 
@@ -51,7 +51,7 @@ impl<T> Fragile<T> {
     pub fn new(value: T) -> Self {
         Fragile {
             value: ManuallyDrop::new(FragileValue::Inline(value)),
-            thread_id: thread::current().id(),
+            thread_id: thread_id::current(),
         }
     }
 
@@ -59,7 +59,7 @@ impl<T> Fragile<T> {
     ///
     /// This will be `false` if the value was sent to another thread.
     pub fn is_valid(&self) -> bool {
-        thread::current().id() == self.thread_id
+        thread_id::current() == self.thread_id
     }
 
     #[inline(always)]
@@ -206,7 +206,8 @@ impl<T> Fragile<T> {
 impl<T> Drop for Fragile<T> {
     #[track_caller]
     fn drop(&mut self) {
-        // Check this first because obtaining a thread ID can fail during TLS teardown.
+        // Values without drop glue can be released on any thread, so the
+        // thread check is skipped for them.
         if !mem::needs_drop::<T>() || self.is_valid() {
             // SAFETY: `ManuallyDrop::drop` cannot be called after this point.
             unsafe { ManuallyDrop::drop(&mut self.value) };
@@ -392,6 +393,37 @@ fn test_panic_on_drop_elsewhere() {
     .join()
     .is_err());
     assert!(!was_called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_drop_in_tls_destructor() {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    struct X(Arc<AtomicUsize>);
+
+    impl Drop for X {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    thread_local!(static SLOT: RefCell<Option<Fragile<X>>> = RefCell::new(None));
+
+    let drop_count = Arc::new(AtomicUsize::new(0));
+    let thread_drop_count = drop_count.clone();
+
+    // The thread check in the destructor must keep working while the thread
+    // is destroying its thread local storage.
+    thread::spawn(move || {
+        SLOT.with(|slot| *slot.borrow_mut() = Some(Fragile::new(X(thread_drop_count))));
+    })
+    .join()
+    .unwrap();
+
+    assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]

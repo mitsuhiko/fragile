@@ -102,6 +102,7 @@ mod fragile;
 mod registry;
 mod semisticky;
 mod sticky;
+mod thread_id;
 
 #[cfg(feature = "future")]
 mod futures;

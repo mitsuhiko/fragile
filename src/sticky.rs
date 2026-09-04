@@ -2,11 +2,10 @@ use std::cmp;
 use std::fmt;
 use std::marker::{PhantomData, PhantomPinned};
 use std::mem;
-use std::thread;
-use std::thread::ThreadId;
 
 use crate::errors::InvalidThreadAccess;
 use crate::registry;
+use crate::thread_id::{self, ThreadId};
 
 /// A [`Sticky<T>`] keeps a value T stored in a thread.
 ///
@@ -68,7 +67,7 @@ impl<T> Sticky<T> {
             },
         };
 
-        let thread_id = thread::current().id();
+        let thread_id = thread_id::current();
         let item_id = registry::insert(entry);
 
         Sticky {
@@ -91,7 +90,7 @@ impl<T> Sticky<T> {
     /// This will be `false` if the value was sent to another thread.
     #[inline(always)]
     pub fn is_valid(&self) -> bool {
-        thread::current().id() == self.thread_id
+        thread_id::current() == self.thread_id
     }
 
     #[inline(always)]
@@ -522,6 +521,37 @@ fn test_thread_spawn() {
         drop(dummy_sticky);
         assert_eq!(hello, "Hello World");
     });
+}
+
+#[test]
+fn test_drop_in_tls_destructor() {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+
+    struct X(Arc<AtomicUsize>);
+
+    impl Drop for X {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    thread_local!(static SLOT: RefCell<Option<Sticky<X>>> = RefCell::new(None));
+
+    let drop_count = Arc::new(AtomicUsize::new(0));
+    let thread_drop_count = drop_count.clone();
+
+    // Dropping the wrapper from a thread local destructor must neither panic
+    // nor abort, regardless of the order in which destructors run.
+    thread::spawn(move || {
+        SLOT.with(|slot| *slot.borrow_mut() = Some(Sticky::new(X(thread_drop_count))));
+    })
+    .join()
+    .unwrap();
+
+    assert_eq!(drop_count.load(Ordering::SeqCst), 1);
 }
 
 #[test]

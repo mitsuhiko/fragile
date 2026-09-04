@@ -15,6 +15,10 @@ All notable changes to fragile are documented here.
   `T: Unpin`.
 * Hardened thread-local registry cleanup for nested `Sticky` values and
   reentrant destructors.
+* Thread identity checks no longer use `std::thread::current()`, which panics
+  during thread-local storage teardown on Rust versions before 1.84. Dropping a
+  `Fragile` or `Sticky` from a thread-local destructor on those versions no
+  longer aborts the process.
 
 ## 2.1.0
 
